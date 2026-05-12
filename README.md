@@ -17,10 +17,3 @@ Sensitive security tools and private configs stripped.
 - **web-apps/** — Landing pages, React/Next.js projects
 - **websocket-bridge/** — Bridge server + Unity client
 
-## Excluded (security & sensitive)
-- security/ (pentest tools, payloads, exploit refs)
-- seo-checker/ (private tool)
-- seo-toolbox/ (private tool)
-- config/ (env files, credentials)
-- memory/ (session memory)
-- shared/ (agent shared secrets)
