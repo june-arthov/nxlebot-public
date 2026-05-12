@@ -1,0 +1,124 @@
+{
+  "metadata": {
+    "created": "2026-05-11",
+    "lastUpdated": "2026-05-11",
+    "version": "1.0",
+    "maintainer": "Nxelle AI"
+  },
+  "projects": {
+    "seo-toolbox": {
+      "id": "seo-toolbox-v2",
+      "name": "SEO Toolbox v2.0",
+      "status": "completed",
+      "priority": "high",
+      "location": "~/workspace/seo-toolbox/",
+      "startDate": "2026-05-09",
+      "endDate": "2026-05-11",
+      "progress": 100,
+      "features": {
+        "total": 53,
+        "completed": 53,
+        "remaining": 0
+      },
+      "tests": {
+        "total": 77,
+        "passing": 77,
+        "failing": 0
+      },
+      "phases": ["phase1", "phase2"],
+      "technologies": ["nodejs", "express", "sqlite", "chartjs"],
+      "dependencies": [],
+      "blockers": [],
+      "notes": "Production-ready with full feature set",
+      "lastCommit": "2026-05-11",
+      "nextSteps": ["Deployment", "Monitoring setup"]
+    },
+    "ocp-website": {
+      "id": "ocp-website",
+      "name": "OCP Website",
+      "status": "active",
+      "priority": "medium",
+      "location": "~/workspace/projects/ocp-website/",
+      "startDate": "2026-04-29",
+      "progress": 30,
+      "features": {
+        "total": 20,
+        "completed": 6,
+        "remaining": 14
+      },
+      "dependencies": [],
+      "blockers": ["Content finalization"],
+      "notes": "Needs progress assessment",
+      "lastUpdated": "2026-05-05"
+    },
+    "virtual-office-game": {
+      "id": "virtual-office-game",
+      "name": "Virtual Office Game",
+      "status": "active",
+      "priority": "medium",
+      "location": "~/workspace/projects/virtual-office-game/",
+      "startDate": "2026-04-09",
+      "progress": 45,
+      "features": {
+        "total": 15,
+        "completed": 7,
+        "remaining": 8
+      },
+      "dependencies": ["Tabler UI"],
+      "blockers": [],
+      "notes": "Tabler integration in progress",
+      "lastUpdated": "2026-05-06"
+    },
+    "octan-lang": {
+      "id": "octan-lang",
+      "name": "Octan Language",
+      "status": "postponed",
+      "priority": "low",
+      "location": "~/workspace/projects/octan-lang/",
+      "startDate": "2026-04-09",
+      "progress": 15,
+      "features": {
+        "total": 10,
+        "completed": 2,
+        "remaining": 8
+      },
+      "dependencies": ["Language spec finalization"],
+      "blockers": ["Spec not finalized"],
+      "notes": "Waiting for specification",
+      "lastUpdated": "2026-04-09"
+    },
+    "vscode-ocp": {
+      "id": "vscode-ocp",
+      "name": "VSCode OCP Extension",
+      "status": "postponed",
+      "priority": "low",
+      "location": "~/workspace/projects/vscode-ocp/",
+      "startDate": "2026-05-05",
+      "progress": 10,
+      "features": {
+        "total": 8,
+        "completed": 1,
+        "remaining": 7
+      },
+      "dependencies": ["OCP core stability"],
+      "blockers": ["Depends on OCP website completion"],
+      "notes": "On hold until OCP core is stable",
+      "lastUpdated": "2026-05-05"
+    }
+  },
+  "stats": {
+    "totalProjects": 5,
+    "completed": 1,
+    "active": 2,
+    "postponed": 2,
+    "archived": 4,
+    "averageProgress": 40,
+    "highestPriority": "seo-toolbox"
+  },
+  "categories": {
+    "web": 2,
+    "tool": 1,
+    "language": 1,
+    "extension": 1
+  }
+}

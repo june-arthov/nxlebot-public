@@ -1,0 +1,128 @@
+pre {
+    .hs-definition {
+        color: #70bee2;
+    }
+
+    .hs-num {
+        color: #ac7ff5;
+    }
+
+    .hs-keyword {
+        color: #6144b3;
+    }
+
+    .hs-layout,
+    .hs-keyglyph {
+        color: #606060;
+    }
+}
+
+.rejected-code {
+    position: relative;
+
+    pre,
+    .pre * {
+        color: #a94442;
+        background-color: #f2ebeb;
+        border-color: #ebccd1;
+    }
+
+    .rejected-note {
+        position: absolute;
+        top: 0;
+        line-height: 2em;
+        height: 2em;
+        vertical-align: middle;
+        right: 0.5em;
+        color: #a94442;
+        font-style: italic;
+    }
+}
+
+.branding.sample {
+    pre {
+        line-height: 1.3;
+    }
+
+    h4 {
+        margin-top: 1.1em;
+    }
+}
+
+#console {
+    font-family: monospace;
+}
+
+.jquery-console-nofocus {
+    opacity: 0.8;
+}
+
+.jquery-console-focus .jquery-console-cursor {
+    background: #f7f7f7;
+    color:#eee;
+    font-weight:bold;
+}
+
+.jquery-console-inner {
+    max-height: 20em;
+    overflow: auto;
+    word-wrap: break-word;
+}
+
+.jquery-console-prompt-label {
+    color: #db83ed;
+    font-weight: bold;
+}
+
+.jquery-console-prompt-box {
+    clear: both;
+}
+
+.jquery-console-error {
+    color: #b261ad;
+    clear: left;
+}
+
+.jquery-console-value {
+    color: #469ef1;
+    clear: left;
+    float: left;
+}
+
+.jquery-console-stdout {
+    color: #31a462;
+    clear: left;
+    float: left;
+}
+
+.jquery-console-type {
+    color: #f7f7f7;
+}
+
+.jquery-console-welcome {
+    color: #fff;
+    margin-bottom: 0.5em;
+}
+
+.jquery-console-stdout + .jquery-console-type {
+    display: none !important;
+}
+
+.jquery-console-value:empty + .jquery-console-type {
+    visibility: visible;
+}
+
+.jquery-console-value + .jquery-console-type {
+    float: left;
+    margin-left: .5em;
+}
+
+#guide .spoiler {
+    color: #f7f7f9;
+    background: #f7f7f9;
+
+    &:hover {
+        color: #d14;
+    }
+
+}

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "OC+ (Octane)",
+  "scopeName": "source.ocp",
+  "patterns": [
+    {
+      "name": "comment.line.ocp",
+      "match": "#.*$"
+    },
+    {
+      "name": "string.quoted.double.ocp",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.ocp",
+          "match": "\\\\."
+        },
+        {
+          "name": "variable.interpolation.ocp",
+          "match": "\\$\\w+"
+        }
+      ]
+    },
+    {
+      "name": "keyword.control.ocp",
+      "match": "\\b(if|else|for|while|in|try|catch|parallel)\\b"
+    },
+    {
+      "name": "keyword.command.ocp",
+      "match": "\\b(set|run|echo|cd)\\b"
+    },
+    {
+      "name": "keyword.operator.comparison.ocp",
+      "match": "[!=<>]=?|=="
+    },
+    {
+      "name": "keyword.operator.assignment.ocp",
+      "match": "="
+    },
+    {
+      "name": "keyword.operator.arithmetic.ocp",
+      "match": "[+\\-*/%]"
+    },
+    {
+      "name": "variable.other.ocp",
+      "match": "\\$\\w+"
+    },
+    {
+      "name": "constant.numeric.ocp",
+      "match": "\\b\\d+\\b"
+    },
+    {
+      "name": "support.function.range.ocp",
+      "match": "\\.\\."
+    }
+  ],
+  "repository": {}
+}

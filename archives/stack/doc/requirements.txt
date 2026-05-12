@@ -1,0 +1,20 @@
+# pip requirements file for MkDocs, used by Read The Docs
+#
+# See:
+#
+# The Read The Docs recommendation to 'pin' the MkDocs version used to build
+# documentation:
+# https://docs.readthedocs.io/en/stable/guides/reproducible-builds.html#pinning-dependencies
+#
+# The pip guide to its requirements file format:
+# https://pip.pypa.io/en/stable/reference/requirements-file-format/
+#
+# Current version as at 20 July 2024
+mkdocs==1.6.0
+# Added as the structure of the online documentation was reorganised around the
+# time of the release of Stack 3.1.1. See:
+#
+# https://github.com/mkdocs/catalog?tab=readme-ov-file#-links--references
+# https://github.com/mkdocs/mkdocs-redirects
+mkdocs-redirects
+mkdocs-material[imaging]

@@ -1,0 +1,317 @@
+THE NEW HP BUILD
+
+A single tool that can:
+    - check the proposed set of packages
+    - build the source tar ball (see below for definition)
+        - given either the current tool chain
+        - or the proposed one (should really be just cabal, yes?)
+    - build directly from the source packages
+        - using the current tool chain
+        - checking that it is what we expect (optionally ignorable)
+        - check if they are already installed
+            - either force / update / skip if they are
+    - install from source packages
+        - build (see above)
+        - if built, install
+    - build the Mac installer
+        - from the source packages (perhaps fetching if needed!)
+        - from a bindist of ghc (perhaps fetching if asked)
+        - checking that the bin dist is what we expect (optinoally ignorable)
+    - rebuild master haddock
+
+
+building a package
+------------------
+    - cd to the package source dir
+    - ghc Setup
+    - Setup configure w/million options
+    - Setup build
+    - Setup register --inplace
+    - Setup haddock
+
+installing a package
+--------------------
+    - cd to the package source dir
+    - Setup copy (package puts it in rootdir)
+    - Setup register (package registers in confdir)
+    - ghc-pkg update the conf (install only)
+
+
+the source package
+------------------
+    haskell-plaform-{version}/
+        packages/
+            xxxx-a.b.c.d            -- directory of unpacked source per package
+            haskell-platform-a.b.c.d
+                haskell-platform.cabal
+                Setup.hs            -- not sure if we need this
+                LICENSE
+        hptool/
+            the tool (in source form)
+        etc/
+            core.packages       -- packages in the core
+            source.packages     -- packages added by the platform
+            build.packages      -- packages in the platform, in build order
+
+
+tree layouts
+------------
+
+from HP repo
+------------
+    repo/
+        build/          ... when hptool is run
+        hptool/
+        packages/        ... placed by hand if needed for build
+        website/
+        files...
+
+from HP src tar ball
+--------------------
+    h-p-ver/
+        build/          ... when hptool is run
+        etc/
+        hptool/
+        packages/       ... sources from tarball
+        files...
+
+
+
+Parameters to the Build
+-----------------------
+hp version
+    ghc version (desired)
+    core packages (expected)
+    source packages
+
+ghc tarball
+    ghc version (actual)
+    ghc-(version)-(arch)-(vendor)-(os).tar.bz2
+        note: (os) can have dashes
+
+target OS
+    ghc prefix
+    lib prefix
+
+
+OS X build
+----------
+The definitive answer to how to use the command line tools for installers:
+    http://stackoverflow.com/questions/11487596/making-os-x-installer-packages-like-a-pro-xcode4-developer-id-mountain-lion-re/11487658#11487658
+
+Versions to test:
+    Yosemite
+    OS X 10.10 update 1.0 & Xcode 6.0b
+
+    Mavericks
+    OS X 10.9.3 & Xcode 5.1.1
+
+    Mountain Lion
+    OS X 10.8.5 & Xcode 4.5.2
+
+    Lion
+    OS X 10.7.5 & Xcode 4.2
+    OS X 10.7.5 & Xcode 4.3.2
+
+    Snow Leopard
+    OS X 10.6.8 & Xcode 3.2.6
+
+Why we can't support 10.6:
+
+    ld: targeted OS version does not support use of thread local variables in _GarbageCollect for architecture x86_64
+    collect2: ld returned 1 exit status
+
+
+
+TO DO
+=====
+    key: [ ] = open, [x] = done, [+] = in progress, [-] = won't do (probably)
+
+
+-- A List --
+
+[ ] tar ball should be based on GHC tarball name
+    [ ] do, disassociate official version from tarball name
+
+
+-- B List --
+
+[ ] We should be using the haddock from the bindist
+    [x] There are reports that the Mac build has problems? find and test?
+    [ ] The Release data structure can't handle tools from GHC
+
+[ ] haskell-platform itself is missing from build.packages
+    [ ] does it need to be there?
+    [ ] does it need to be built?
+    [ ] need to include windows stuff in .cabal file (missing now)
+
+[ ] does generated haddock...
+    [ ] have hscolour'd source?
+
+[ ] templatize /website pages
+    [ ] figure out how to pass download hash info
+    [ ] main download pages: mac, linux, windows
+    [ ] prior version page
+    [ ] replace change log with version grid
+        [ ] bring in other Release20xx.hs files
+    [ ] contents page
+
+[ ] refactor common code from PosixLike.hs posixLikeOS and Mac.hs macOSFromConfig
+[ ] posix/bin/activate-hs script
+    [ ] support finding and reporting ghc version, hp version, and arch
+    [ ] should advise on setting up ~/.cabal/config
+    [ ] enable listing versions under /usr/local/haskell
+    [ ] support selecting a version just by its short string: 7.8.3
+
+[ ] more historical release package data
+    - so the change log page will have more data.
+
+
+-- C List --
+
+[ ] either don't untar the ghc bindist twice
+    or use resources to ensure that we don't ghcInstall in parallel
+    or use the new wrapper & new pkg-db technique from the old mac build
+    [ ] if possible, break out installing the GHC for the target and the GHC
+        for local use into two different targets, into two different modules.
+        In this way, os specific code can use the local GHC - since at present
+        building the target GHC requires os specific code and so makes a
+        circular module dependency if it also tries to use localCompile'.
+        (see compileToBin in hptool/src/OS/Mac.hs)
+
+[ ] pre-build cabal install, and then use *that* cabal to build the packages.
+    This would be more "hermetic", but is difficult because cabal-install itself
+    requires a number of platform packages. If we knew the host cabal supported
+    sandboxing (as we will next time 'round), then we can build it in a sandbox,
+    installing the built versions of the platform packages it needs into the
+    sandbox, with the host cabal... produce a local cabal-install... and then
+    use that as the cabal for everything else (including itself). This is sort
+    of like the stage1 build of GHC!
+
+[ ] should the platfrom be taking the following from the GHC dist:
+    registered in pkg db, not part of platfrom, but could be?
+        - binary-0.7.1.0
+        - ghc-7.8.x
+        - ghc-prim-0.3.1.0
+        - hoopl-3.10.0.0
+    registered in pkg db, but shouldn't be part of the platform:
+        - bin-package-db-0.0.0.0
+        - integer-gmp-0.5.1.0
+        - rts-1.0
+    not registered in pkg db or part of platfrom, but shipped
+        - haskeline-0.7.1.2
+        - terminfo-0.4.0.0
+        - xhtml-3000.2.1
+    shiped with ghc
+        - haddock
+
+[ ] hscolour?
+    [ ] check for presence
+    [ ] include in platform?
+
+
+[-] When the web site is built, it is done as a single action with dependencies
+    on all the source files in website/. This means that chaning any file in
+    there rebuilds the entire site. This is probably okay, as otherwise we have
+    to deal with file deletions (which is very hard), and the build is quick.
+
+[ ] invocation script
+    [ ] support older host cabal w/o sandboxing
+    [ ] exec hptool
+    [ ] perhaps add an option to hptool to spec original name so errors
+        read better
+
+[ ] make build dir be current workding directory
+    [ ] command line option for spec'ing where build dir is
+    [ ] default location for build dir
+    [ ] cd into build dir, and then eval all Rules / Actions from there
+
+[ ] something is quite wrong with the marker system
+    [ ] delete the dir, but not the marker - things don't always rebuild
+    [ ] seems like sometimes things rebuild for no reason
+
+[ ] fix inconsistency about if the cp destination is the dir,
+    or the dir to hold the dir
+
+[ ] hptool command to see if there are newer versions of packages (?)
+
+[ ] several calls to head that should probably check and produce
+    better error messages
+
+[ ] ? split out ghc release info from HP, and just reference it?
+
+[ ] fix oddness of targetDir being phoney
+
+[ ] location of templates and hptool source for tarball are hardcoded
+    -- see SourceTarball.hs: hptoolSourceDir & cabalTemplate
+
+[ ] still a few path bits hard coded here and there
+    - see "../packages.conf.d" for example in Target.hs
+
+[ ] normalize the way package DBs are spec'd:
+    [ ] --package-db=global or --global?
+    [ ] is --package-db=clear needed?
+
+[ ] Cabal manual source is now in markdown, not docbook
+    (see in the GHC tree, libraries/Cabal/Cabal/doc)
+    This means the GHC build process no longer builds it - and so it is no
+    longer in the bindist, and hence not in the Mac installer.
+    Somewhere, somthing should run pandoc on this and build the doc.
+    [ ] failing that, get Cabal to put up versioned copies of the manual on the
+    web, and templatize start.html to include a link to the particular version.
+
+[ ] uninstallHS does not distinguish multiple architectures of the same release
+
+[ ] the default cabal.conf should be generated from the cabal we're installing
+    and the incorporated into cabal.wrap (templatize it? read it from a file?)
+
+[ ] hashes on prior release download page
+[ ] change log handling of packages that moved from one section to another
+    is not quite right. i.e. look at xhtml
+
+
+Shake Thoughts
+--------------
+[] building dirs needs better support
+[] when you build something, you must build it afresh!
+    [] and then never modify it
+    [] these requirements come to light when building dirs
+[] global Rules() make it hard to be modular
+    [] if package A has rules for type foo
+    and package B & C need foos, then both can't call the function
+    in A that provides the rules
+
+[] because need takes a list, and you only get parallelism if you
+    supply all needs at once, it is hard to modularlize targets
+    that are based on some hidden info
+
+[] addPath isn't useful because command and friends use createProcess
+    which looks up the executable in the current environment, not the
+    modified environment that will be accompany the final execution
+
+[] copyFile' should putNormal?
+
+[] staunch seems to give up early?
+
+
+[] would love a command line option: just print the known targets and oracles
+[] would love an command line option that prints an explaination for each thing
+
+[] would be nice if there was
+    knowsHow :: FilePath -> Rule Bool
+
+
+Hastache
+--------
+[] tags are looked up in the whole context stack, even if found early in the
+    stack. This is bad if the lookup is in IO.. further, since the default
+    action on not finding a tag in any context is to just swallow the tag, you
+    can have it be an error to not expand (which is what we want)
+
+    the offending code is in Hastache.hs:
+        readContext' = MaybeT $ liftM (List.find (not . isMuNothing)) $
+                         mapM ($ tlInTag) contexts
+
+[] MuContext should be a Monoid
+   see ctxEmpty, ctxAppend, and ctxConcat in Templates.hs
+

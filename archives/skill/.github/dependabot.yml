@@ -1,0 +1,36 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(npm)"
+    groups:
+      npm-all:
+        patterns:
+          - "*"
+
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:15"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(cargo)"
+    groups:
+      cargo-all:
+        patterns:
+          - "*"
+    ignore:
+      # wgpu cannot be upgraded independently: burn-wgpu, gpu-fft, zuna-rs,
+      # and luna-rs all require wgpu 26.x. Upgrade the whole Burn/GPU stack together.
+      - dependency-name: "wgpu"
+        versions: [">=27"]

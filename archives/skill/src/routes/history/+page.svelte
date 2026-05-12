@@ -1,0 +1,2242 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<!-- Copyright (C) 2026 NeuroSkill.com
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, version 3 only. -->
+<!-- Session History - single-day view with prev/next pagination. -->
+
+<script lang="ts">
+import { invoke } from "@tauri-apps/api/core";
+import { onDestroy, onMount } from "svelte";
+import { fade } from "svelte/transition";
+import { Badge } from "$lib/components/ui/badge";
+import { Button } from "$lib/components/ui/button";
+import { ConfirmAction } from "$lib/components/ui/confirm-action";
+import { Separator } from "$lib/components/ui/separator";
+import { Spinner } from "$lib/components/ui/spinner";
+import DisclaimerFooter from "$lib/DisclaimerFooter.svelte";
+import { daemonInvoke } from "$lib/daemon/invoke-proxy";
+import { SessionDetail } from "$lib/dashboard";
+import type { CsvMetricsResult, EpochRow, SessionMetrics } from "$lib/dashboard/SessionDetail.svelte";
+import {
+  dateToLocalKey,
+  fmtDateTimeLocale,
+  fmtDayKey,
+  fmtDurationRange,
+  fmtTimeShort,
+  fromUnix,
+  getDpr,
+  pad,
+  setupHiDpiCanvas,
+} from "$lib/format";
+import HistoryCalendar from "$lib/HistoryCalendar.svelte";
+import HistoryStatsBar from "$lib/HistoryStatsBar.svelte";
+import Hypnogram from "$lib/Hypnogram.svelte";
+import type { GpsPoint } from "$lib/history/SessionMap.svelte";
+import SessionMap from "$lib/history/SessionMap.svelte";
+import {
+  type CalendarOverlayEvent,
+  type GridData,
+  heatColor,
+  renderDayDots as renderDayDotsCanvas,
+  renderDayGrid as renderDayGridCanvas,
+  renderSparkline,
+  type TsAccessor,
+} from "$lib/history-canvas";
+import {
+  assignLabelRainbowColors,
+  dateKey,
+  dateLabel,
+  dayPct,
+  fmtDuration,
+  fmtDurCompact,
+  fmtSamples,
+  fmtSize,
+  fmtTime,
+  GRID_BIN,
+  GRID_COLS,
+  GRID_ROWS,
+  type HistoryStatsData,
+  LABEL_PROXIMITY_SECS,
+  labelRelations,
+  labelsForDay,
+  SESSION_COLORS,
+  type SessionEntry,
+  sessionColor,
+  totalDurationSecs,
+} from "$lib/history-helpers";
+import { t } from "$lib/i18n/index.svelte";
+import { getResolved } from "$lib/stores/theme.svelte";
+import { type HistoryViewMode, hBar, hCbs } from "$lib/stores/titlebar.svelte";
+import { useWindowTitle } from "$lib/stores/window-title.svelte";
+import type { LabelRow, SleepStages } from "$lib/types";
+
+// ── Pagination state ────────────────────────────────────────────────────
+/** The client's timezone offset in seconds east of UTC.
+ *  Passed to every Rust IPC call so all day-boundary logic lives in one place. */
+const tzOffsetSecs = new Date().getTimezoneOffset() * -60;
+
+/** Local day info returned from Rust - single source of truth. */
+interface LocalDayInfo {
+  key: string;
+  start_utc: number;
+  end_utc: number;
+}
+let allLocalDays = $state<LocalDayInfo[]>([]);
+let currentDayIdx = $state(0);
+let dayLoading = $state(false);
+let daysLoading = $state(true);
+
+interface CalendarEvent {
+  id: string;
+  title: string;
+  start_utc: number;
+  end_utc: number;
+  all_day: boolean;
+  location?: string | null;
+  calendar?: string | null;
+  status: string;
+}
+
+/** Sessions for the currently displayed day. */
+let sessions = $state<SessionEntry[]>([]);
+let dayCalendarEvents = $state<CalendarEvent[]>([]);
+
+/** Aggregate stats loaded lazily in the background. */
+let historyStats = $state<HistoryStatsData | null>(null);
+
+// ── Per-session UI state ────────────────────────────────────────────────
+let expanded = $state<Record<string, boolean>>({});
+let confirmDelete = $state<string | null>(null);
+let hoveredSession = $state<string | null>(null);
+/** Currently hovered label id - drives exact-match and proximity highlighting. */
+let hoveredLabelId = $state<number | null>(null);
+/** Fixed-position tooltip for hovered label dots (avoids overflow clipping). */
+let labelTooltip = $state<{ x: number; y: number; text: string; time: string; timeEnd?: string } | null>(null);
+
+// ── Chart visibility (IntersectionObserver per row) ─────────────────────
+/** csv_paths whose row has entered the viewport - chart is only mounted then. */
+let renderedRows = $state(new Set<string>());
+
+/** Svelte action: fires onEnter once when the element scrolls into view
+ *  (with a 120px look-ahead margin), then disconnects. */
+function inview(node: HTMLElement, onEnter: () => void) {
+  const obs = new IntersectionObserver(
+    ([entry]) => {
+      if (entry?.isIntersecting) {
+        onEnter();
+        obs.disconnect();
+      }
+    },
+    { rootMargin: "120px 0px" },
+  );
+  obs.observe(node);
+  return { destroy: () => obs.disconnect() };
+}
+
+// ── Per-day cache stubs ─────────────────────────────────────────────────
+// In-memory caches — survive within a page session so that calendar heatmaps,
+// prefetched adjacent days, and repeated tab switches all use real data.
+//
+// `dayCacheVersion` is a reactive counter that gets bumped on every write,
+// so that `$derived` blocks (e.g. `daySessionCounts`) re-evaluate when the
+// cache grows.  The underlying Map is non-reactive on purpose (cheap reads).
+let dayCacheVersion = $state(0);
+const _dayCache = new Map<string, SessionEntry[]>();
+function readDayCache(day: string): SessionEntry[] | null {
+  return _dayCache.get(day) ?? null;
+}
+function writeDayCache(day: string, data: SessionEntry[]) {
+  _dayCache.set(day, data);
+  dayCacheVersion++;
+}
+const _metricsCache = new Map<string, CsvMetricsResult>();
+function readMetricsCache(csvPath: string): CsvMetricsResult | null {
+  return _metricsCache.get(csvPath) ?? null;
+}
+function writeMetricsCache(csvPath: string, result: CsvMetricsResult) {
+  _metricsCache.set(csvPath, result);
+}
+
+// ── Caches: sleep / metrics / timeseries / location / embeddings ─────────
+let sleepCache = $state<Record<string, SleepStages | "loading" | "short">>({});
+let metricsCache = $state<Record<string, SessionMetrics | "loading" | "none">>({});
+let tsCache = $state<Record<string, EpochRow[] | "loading">>({});
+/** GPS track per csv_path - "loading" while IPC is in flight; [] when no data. */
+let locationCache = $state<Record<string, GpsPoint[] | "loading">>({});
+/** HNSW+SQLite epoch count per csv_path. */
+let embedCountCache = $state<Record<string, number | "loading">>({});
+
+// ── Health / Oura data overlay ───────────────────────────────────────────
+interface HealthDaySummary {
+  sleep_samples: number;
+  workouts: number;
+  heart_rate_samples: number;
+  total_steps: number;
+  mindfulness_sessions: number;
+  metric_entries: number;
+  oura_sleep_score?: number;
+  oura_readiness_score?: number;
+  oura_activity_score?: number;
+}
+let healthCache = $state<Record<string, HealthDaySummary | "loading" | "none">>({});
+let healthApiPort = $state<number | null>(null);
+
+/** Fetch JSON from the local HTTP API.  Returns null on any error. */
+async function healthFetch(path: string, body: Record<string, unknown>): Promise<unknown> {
+  if (!healthApiPort) {
+    try {
+      healthApiPort = await daemonInvoke<number>("get_ws_port");
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const resp = await fetch(`http://127.0.0.1:${healthApiPort}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) return null;
+    const ct = resp.headers.get("content-type") ?? "";
+    if (!ct.includes("json")) return null;
+    return await resp.json().catch(() => null);
+  } catch {
+    return null;
+  }
+}
+
+/** Look up pre-computed UTC bounds for a local day key.
+ *  Returns { startSec, endSec } or { startSec: 0, endSec: 0 } if not found. */
+function dayBoundsFor(localKey: string): { startSec: number; endSec: number } {
+  const info = allLocalDays.find((d) => d.key === localKey);
+  return info ? { startSec: info.start_utc, endSec: info.end_utc } : { startSec: 0, endSec: 0 };
+}
+
+async function loadHealthForDay(localKey: string) {
+  if (localKey in healthCache) return;
+  healthCache[localKey] = "loading";
+  try {
+    const { startSec, endSec } = dayBoundsFor(localKey);
+    // biome-ignore lint/suspicious/noExplicitAny: opaque health API response
+    const summary = (await healthFetch("/v1/health/summary", { start_utc: startSec, end_utc: endSec })) as any;
+    if (!summary) {
+      healthCache[localKey] = "none";
+      return;
+    }
+    const total =
+      (summary.sleep_samples ?? 0) +
+      (summary.workouts ?? 0) +
+      (summary.heart_rate_samples ?? 0) +
+      (summary.total_steps ?? 0) +
+      (summary.mindfulness_sessions ?? 0) +
+      (summary.metric_entries ?? 0);
+    if (total === 0) {
+      healthCache[localKey] = "none";
+      return;
+    }
+    // Try to fetch key Oura scores
+    let oura_sleep_score: number | undefined;
+    let oura_readiness_score: number | undefined;
+    let oura_activity_score: number | undefined;
+    try {
+      const rSleep = await healthFetch("/v1/health/query", {
+        type: "metrics",
+        metric_type: "oura_sleep_score",
+        start_utc: startSec,
+        end_utc: endSec,
+        limit: 1,
+      });
+      // biome-ignore lint/suspicious/noExplicitAny: cast on opaque API shape
+      if ((rSleep as any)?.results?.[0]?.value) oura_sleep_score = (rSleep as any).results[0].value;
+    } catch {}
+    try {
+      const rReady = await healthFetch("/v1/health/query", {
+        type: "metrics",
+        metric_type: "oura_readiness_score",
+        start_utc: startSec,
+        end_utc: endSec,
+        limit: 1,
+      });
+      // biome-ignore lint/suspicious/noExplicitAny: cast on opaque API shape
+      if ((rReady as any)?.results?.[0]?.value) oura_readiness_score = (rReady as any).results[0].value;
+    } catch {}
+    try {
+      const rActivity = await healthFetch("/v1/health/query", {
+        type: "metrics",
+        metric_type: "oura_activity_score",
+        start_utc: startSec,
+        end_utc: endSec,
+        limit: 1,
+      });
+      // biome-ignore lint/suspicious/noExplicitAny: cast on opaque API shape
+      if ((rActivity as any)?.results?.[0]?.value) oura_activity_score = (rActivity as any).results[0].value;
+    } catch {}
+    healthCache[localKey] = {
+      ...(summary as HealthDaySummary),
+      oura_sleep_score,
+      oura_readiness_score,
+      oura_activity_score,
+    };
+  } catch {
+    healthCache[localKey] = "none";
+  }
+}
+
+function getHealthData(localKey: string): HealthDaySummary | null {
+  const v = healthCache[localKey];
+  if (!v || v === "loading" || v === "none") return null;
+  return v as HealthDaySummary;
+}
+
+/** Accumulates every SessionEntry we've ever fetched (current day + prefetched
+ *  adjacent days).  Lets runMetrics / loadSleep look up timestamps for any
+ *  session regardless of which day is currently displayed.              */
+const sessionRegistry = new Map<string, SessionEntry>();
+function registerSessions(list: SessionEntry[]) {
+  for (const s of list) if (s.csv_path) sessionRegistry.set(s.csv_path, s);
+}
+
+function getSleepData(csvPath: string): SleepStages | null {
+  const v = sleepCache[csvPath];
+  if (!v || v === "loading" || v === "short") return null;
+  return (v as SleepStages).epochs.length > 0 ? (v as SleepStages) : null;
+}
+function getMetrics(csvPath: string): SessionMetrics | null {
+  const v = metricsCache[csvPath];
+  if (!v || v === "loading" || v === "none") return null;
+  return (v as SessionMetrics).n_epochs > 0 ? (v as SessionMetrics) : null;
+}
+function getTs(csvPath: string): EpochRow[] | null {
+  const v = tsCache[csvPath];
+  if (!v || v === "loading") return null;
+  return (v as EpochRow[]).length > 2 ? (v as EpochRow[]) : null;
+}
+
+// ── Batch metrics loader ──────────────────────────────────────────────────
+// Loads all sessions' metrics in a single IPC call.  The backend reads from
+// a fast disk cache (`_metrics_cache.json`) when available and returns
+// downsampled timeseries (≤360 points) to keep payloads small.
+
+/** Load metrics for a list of csv paths in one batch call.
+ *  Paths already in the cache are skipped. */
+async function loadMetricsBatch(csvPaths: string[]) {
+  // Filter out already-loaded paths.
+  const needed = csvPaths.filter((p) => !(p in metricsCache));
+  if (needed.length === 0) return;
+
+  // Mark all as loading.
+  for (const p of needed) {
+    metricsCache[p] = "loading";
+    tsCache[p] = "loading";
+  }
+
+  try {
+    const results = await invoke<Record<string, CsvMetricsResult>>("get_day_metrics_batch", {
+      csvPaths: needed,
+      maxTsPoints: 360,
+    });
+    for (const p of needed) {
+      const result = results[p];
+      if (result && result.n_rows > 0) {
+        metricsCache[p] = result.summary;
+        tsCache[p] = result.timeseries;
+        writeMetricsCache(p, result);
+      } else {
+        // Fallback: try SQLite-based loading for sessions without _metrics.csv
+        void loadMetricsFallback(p);
+      }
+    }
+  } catch (e) {
+    for (const p of needed) void loadMetricsFallback(p);
+  }
+}
+
+/** Fallback for a single session without _metrics.csv - queries SQLite. */
+async function loadMetricsFallback(csvPath: string) {
+  const session = sessionRegistry.get(csvPath);
+  if (!session?.session_start_utc || !session?.session_end_utc) {
+    metricsCache[csvPath] = "none";
+    tsCache[csvPath] = [];
+    return;
+  }
+  try {
+    metricsCache[csvPath] = await daemonInvoke<SessionMetrics>("get_session_metrics", {
+      startUtc: session.session_start_utc,
+      endUtc: session.session_end_utc,
+    });
+  } catch {
+    metricsCache[csvPath] = "none";
+  }
+  try {
+    tsCache[csvPath] = await daemonInvoke<EpochRow[]>("get_session_timeseries", {
+      startUtc: session.session_start_utc,
+      endUtc: session.session_end_utc,
+    });
+  } catch {
+    tsCache[csvPath] = [];
+  }
+}
+
+/** Legacy single-session loader - still used by expand toggle and prefetch. */
+function loadMetrics(csvPath: string) {
+  if (csvPath in metricsCache) return;
+  void loadMetricsBatch([csvPath]);
+}
+
+async function loadSleep(csvPath: string) {
+  if (csvPath in sleepCache) return;
+  const session = sessionRegistry.get(csvPath);
+  if (!session || !session.session_start_utc || !session.session_end_utc) return;
+  if (session.session_end_utc - session.session_start_utc < 1800) {
+    sleepCache[csvPath] = "short";
+    return;
+  }
+  sleepCache[csvPath] = "loading";
+  try {
+    sleepCache[csvPath] = await daemonInvoke<SleepStages>("get_sleep_stages", {
+      startUtc: session.session_start_utc,
+      endUtc: session.session_end_utc,
+    });
+  } catch {
+    delete sleepCache[csvPath];
+  }
+}
+
+// ── GPS location loader ──────────────────────────────────────────────────
+function getLocation(csvPath: string): GpsPoint[] | null {
+  const v = locationCache[csvPath];
+  if (!v || v === "loading") return null;
+  return v as GpsPoint[];
+}
+async function loadLocation(csvPath: string) {
+  if (csvPath in locationCache) return;
+  const session = sessionRegistry.get(csvPath);
+  if (!session?.session_start_utc || !session?.session_end_utc) return;
+  locationCache[csvPath] = "loading";
+  try {
+    locationCache[csvPath] = await daemonInvoke<GpsPoint[]>("get_session_location", {
+      csvPath,
+      startUtc: session.session_start_utc,
+      endUtc: session.session_end_utc,
+    });
+  } catch {
+    locationCache[csvPath] = [];
+  }
+}
+
+// ── Embedding-count loader ─────────────────────────────────────────────────
+async function loadEmbedCount(csvPath: string) {
+  if (csvPath in embedCountCache) return;
+  const session = sessionRegistry.get(csvPath);
+  if (!session?.session_start_utc || !session?.session_end_utc) return;
+  embedCountCache[csvPath] = "loading";
+  try {
+    embedCountCache[csvPath] = await daemonInvoke<number>("get_session_embedding_count", {
+      startUtc: session.session_start_utc,
+      endUtc: session.session_end_utc,
+    });
+  } catch {
+    embedCountCache[csvPath] = 0;
+  }
+}
+
+// ── Local-day helpers ────────────────────────────────────────────────────
+/** Convert a UTC Unix-seconds value to its UTC YYYYMMDD directory name. */
+
+// ── Day navigation ──────────────────────────────────────────────────────
+/** Monotonically increasing counter - incremented on every loadDay call so
+ *  that stale responses from rapid navigation are silently discarded.    */
+let loadSeq = 0;
+
+/** Fetch sessions for a local day key.
+ *  All UTC→local conversion, directory fan-out, de-duplication, and timestamp
+ *  filtering now happens in the Rust crate (single source of truth).        */
+async function fetchDaySessions(localKey: string): Promise<SessionEntry[]> {
+  return daemonInvoke<SessionEntry[]>("list_sessions_for_local_day", {
+    localKey,
+    tzOffsetSecs: tzOffsetSecs,
+  });
+}
+
+/** Warm the localStorage + metrics caches for a day without touching any
+ *  reactive display state.  Called speculatively for adjacent days.     */
+async function prefetchDay(localKey: string) {
+  // Fetch session list (skip if already cached).
+  let list = readDayCache(localKey);
+  if (!list) {
+    try {
+      list = await fetchDaySessions(localKey);
+      writeDayCache(localKey, list);
+    } catch {
+      return; /* silent - prefetch is best-effort */
+    }
+  }
+
+  // Register sessions so runMetrics can resolve timestamps for them.
+  registerSessions(list);
+
+  // Restore from sessionStorage first, then batch-load the rest.
+  const needsBatch: string[] = [];
+  for (const s of list) {
+    if (!s.csv_path || s.csv_path in metricsCache) continue;
+    const mc = readMetricsCache(s.csv_path);
+    if (mc) {
+      metricsCache[s.csv_path] = mc.summary as SessionMetrics;
+      tsCache[s.csv_path] = mc.timeseries ?? [];
+    } else {
+      needsBatch.push(s.csv_path);
+    }
+  }
+  if (needsBatch.length > 0) void loadMetricsBatch(needsBatch);
+}
+
+async function loadDay(idx: number) {
+  if (idx < 0 || idx >= localDays.length) return;
+  currentDayIdx = idx;
+  const seq = ++loadSeq; // tag this navigation
+  const localKey = localDays[idx];
+
+  // Reset per-day UI state
+  renderedRows = new Set();
+  expanded = {};
+  hoveredSession = null;
+  confirmDelete = null;
+
+  // 1 Show cached sessions immediately - zero-latency first paint
+  const cached = readDayCache(localKey);
+  if (cached && cached.length > 0) {
+    sessions = cached;
+    registerSessions(cached);
+    // Restore metrics from sessionStorage for instant chart render.
+    for (const s of sessions) {
+      if (s.csv_path && !(s.csv_path in tsCache)) {
+        const mc = readMetricsCache(s.csv_path);
+        if (mc) {
+          tsCache[s.csv_path] = mc.timeseries ?? [];
+          metricsCache[s.csv_path] = mc.summary;
+        }
+      }
+    }
+  } else {
+    sessions = [];
+  }
+
+  // 2 Load fresh data from the backend (both UTC dirs fetched in parallel).
+  dayLoading = true;
+  try {
+    const fresh = await fetchDaySessions(localKey);
+    // biome-ignore lint/suspicious/noConsole: temporary diagnostic — remove after confirming fix
+    console.warn(`[history] loadDay(${localKey}) → ${fresh.length} sessions`);
+    if (loadSeq !== seq) return; // navigated away - discard stale response
+
+    sessions = fresh;
+    registerSessions(fresh);
+    setTimeout(() => writeDayCache(localKey, fresh), 0); // defer serialisation
+
+    // Restore from sessionStorage, collect the rest for batch loading.
+    const needsBatch: string[] = [];
+    for (const s of fresh) {
+      if (!s.csv_path) continue;
+      if (s.csv_path in metricsCache) continue;
+      const mc = readMetricsCache(s.csv_path);
+      if (mc) {
+        tsCache[s.csv_path] = mc.timeseries ?? [];
+        metricsCache[s.csv_path] = mc.summary;
+      } else {
+        needsBatch.push(s.csv_path);
+      }
+    }
+    // Single IPC call loads all remaining sessions' metrics at once.
+    if (needsBatch.length > 0) void loadMetricsBatch(needsBatch);
+  } catch (e) {
+    // biome-ignore lint/suspicious/noConsole: intentional error logging for debug
+    if (loadSeq === seq) console.error("loadDay error:", e);
+  } finally {
+    if (loadSeq === seq) dayLoading = false;
+  }
+
+  // 3 Load screenshots + calendar events + health data for the day.
+  const { startSec } = dayBoundsFor(localKey);
+  void loadDayScreenshots(startSec);
+  void loadDayCalendarEvents(startSec);
+  void loadHealthForDay(localKey);
+
+  // 4 Speculatively warm adjacent days so the next navigation is instant.
+  setTimeout(() => {
+    if (idx > 0) void prefetchDay(localDays[idx - 1]);
+    if (idx < localDays.length - 1) void prefetchDay(localDays[idx + 1]);
+  }, 300);
+}
+
+// ── Session actions ─────────────────────────────────────────────────────
+async function deleteSession(csvPath: string) {
+  await daemonInvoke("delete_session", { csvPath });
+  confirmDelete = null;
+  delete expanded[csvPath];
+  sessions = sessions.filter((s) => s.csv_path !== csvPath);
+  setTimeout(() => writeDayCache(localDays[currentDayIdx], sessions), 0);
+}
+
+function toggleExpand(csvPath: string) {
+  expanded[csvPath] = !expanded[csvPath];
+  if (expanded[csvPath]) {
+    loadSleep(csvPath);
+    loadMetrics(csvPath);
+    void loadLocation(csvPath);
+    void loadEmbedCount(csvPath);
+    // Scroll expanded row into view after DOM update (#13)
+    requestAnimationFrame(() => {
+      const idx = sessions.findIndex((s) => s.csv_path === csvPath);
+      if (idx >= 0) {
+        const el = document.getElementById(`session-row-${idx}`);
+        el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    });
+  }
+}
+
+// ── Quick-compare ───────────────────────────────────────────────────────
+let compareMode = $state(false);
+let compareSelected = $state<string[]>([]);
+
+function toggleCompareSelect(csvPath: string) {
+  if (compareSelected.includes(csvPath)) compareSelected = compareSelected.filter((p) => p !== csvPath);
+  else if (compareSelected.length < 2) compareSelected = [...compareSelected, csvPath];
+}
+async function openQuickCompare() {
+  if (compareSelected.length < 2) return;
+  const [a, b] = compareSelected;
+  const sA = sessions.find((s) => s.csv_path === a);
+  const sB = sessions.find((s) => s.csv_path === b);
+  if (!sA?.session_start_utc || !sA?.session_end_utc || !sB?.session_start_utc || !sB?.session_end_utc) return;
+  try {
+    await invoke("open_compare_window_with_sessions", {
+      startA: sA.session_start_utc,
+      endA: sA.session_end_utc,
+      startB: sB.session_start_utc,
+      endB: sB.session_end_utc,
+    });
+  } catch (e) {}
+}
+function exitCompareMode() {
+  compareMode = false;
+  compareSelected = [];
+}
+
+// ── Screenshots for current day ───────────────────────────────────────
+interface ScreenshotInfo {
+  unix_ts: number;
+  filename: string;
+  app_name: string;
+  window_title: string;
+}
+/** Screenshots for the current day, keyed by unix_ts for fast lookup. */
+let dayScreenshots = $state<ScreenshotInfo[]>([]);
+/** Set of unix timestamps that have a screenshot - for O(1) cell lookup. */
+let screenshotTsSet = $derived(new Set(dayScreenshots.map((s) => s.unix_ts)));
+/** Map unix_ts → ScreenshotInfo for tooltip/preview lookup. */
+let screenshotByTs = $derived(new Map(dayScreenshots.map((s) => [s.unix_ts, s])));
+/** API port for screenshot image URLs. */
+let screenshotPort = $state(8375);
+/** Currently previewed screenshot (shown on hover). */
+let screenshotPreview = $state<{ x: number; y: number; src: string; title: string } | null>(null);
+
+function screenshotUrl(filename: string): string {
+  return filename ? `http://127.0.0.1:${screenshotPort}/screenshots/${filename}` : "";
+}
+
+/** Load all screenshots within the current day's time range. */
+async function loadDayScreenshots(dayStart: number) {
+  try {
+    const midpoint = dayStart + 43200; // noon
+    const results = await daemonInvoke<ScreenshotInfo[]>("get_screenshots_around", {
+      timestamp: midpoint,
+      windowSecs: 43200,
+    });
+    dayScreenshots = results;
+  } catch {
+    dayScreenshots = [];
+  }
+}
+
+/** Load calendar events overlapping the current local day. */
+async function loadDayCalendarEvents(dayStart: number) {
+  try {
+    dayCalendarEvents = await invoke<CalendarEvent[]>("get_calendar_events", {
+      startUtc: dayStart,
+      endUtc: dayStart + 86400,
+    });
+  } catch {
+    dayCalendarEvents = [];
+  }
+}
+
+// ── Labels browser ──────────────────────────────────────────────────────
+// biome-ignore lint/suspicious/noExplicitAny: opaque annotation records from backend
+let allLabels = $state<any[]>([]);
+let showLabels = $state(false);
+let labelSearchQuery = $state("");
+
+async function loadLabels() {
+  try {
+    // biome-ignore lint/suspicious/noExplicitAny: opaque annotation records from backend
+    allLabels = await daemonInvoke<any[]>("query_annotations", { startUtc: null, endUtc: null });
+  } catch {
+    allLabels = [];
+  }
+}
+async function removeLabel(id: number) {
+  try {
+    await daemonInvoke("delete_label", { labelId: id });
+    allLabels = allLabels.filter((l) => l.id !== id);
+  } catch (e) {}
+}
+const filteredLabels = $derived.by(() => {
+  const q = labelSearchQuery.toLowerCase().trim();
+  return q ? allLabels.filter((l) => l.text.toLowerCase().includes(q)) : allLabels;
+});
+
+// ── Calendar heatmap state ──────────────────────────────────────────────
+/** Start in day view so the session list is visible immediately.
+ *  Users can switch to month/week/year from the title-bar buttons. */
+let viewMode = $state<HistoryViewMode>("day");
+/** Anchor date for calendar navigation — updated to the most recent
+ *  session date once allLocalDays has been loaded, so switching to the
+ *  month/year calendar always lands on a populated period. */
+let calendarAnchor = $state(new Date());
+
+function setViewMode(m: HistoryViewMode) {
+  viewMode = m;
+  if (m === "day" && localDays.length > 0) {
+    loadDay(currentDayIdx);
+  }
+}
+
+/** Navigate calendar by one unit in the given direction. */
+function calendarNav(dir: -1 | 1) {
+  const d = new Date(calendarAnchor);
+  switch (viewMode) {
+    case "year":
+      d.setFullYear(d.getFullYear() + dir);
+      break;
+    case "month":
+      d.setMonth(d.getMonth() + dir);
+      break;
+    case "week":
+      d.setDate(d.getDate() + dir * 7);
+      break;
+    case "day":
+      break;
+  }
+  calendarAnchor = d;
+}
+
+/** Navigate to a specific day from the calendar heatmap. */
+function navigateToDay(dayKey: string) {
+  const idx = localDays.indexOf(dayKey);
+  if (idx >= 0) {
+    viewMode = "day";
+    loadDay(idx);
+  }
+}
+
+// heatColor is imported from $lib/history-canvas
+
+// ── Week/day epoch dot timeline ─────────────────────────────────────────
+
+/** Sessions loaded for each day key in the week view. */
+let weekSessions = $state<Map<string, SessionEntry[]>>(new Map());
+let weekLoading = $state(false);
+
+/** Load sessions + timeseries for all days shown in the current week view. */
+async function loadWeekData() {
+  if (viewMode !== "week") return;
+  weekLoading = true;
+  const dayKeys = calendarCells.map((c) => c.dayKey).filter((k) => k);
+  const map = new Map<string, SessionEntry[]>();
+  const allNeedsBatch: string[] = [];
+  await Promise.all(
+    dayKeys.map(async (dk) => {
+      try {
+        let list = readDayCache(dk);
+        if (!list) {
+          list = await fetchDaySessions(dk);
+          writeDayCache(dk, list);
+        }
+        registerSessions(list);
+        map.set(dk, list);
+        // Collect all sessions needing metrics.
+        for (const s of list) {
+          if (s.csv_path && !(s.csv_path in metricsCache)) {
+            const mc = readMetricsCache(s.csv_path);
+            if (mc) {
+              metricsCache[s.csv_path] = mc.summary;
+              tsCache[s.csv_path] = mc.timeseries ?? [];
+            } else allNeedsBatch.push(s.csv_path);
+          }
+        }
+      } catch {
+        map.set(dk, []);
+      }
+    }),
+  );
+  // Single batch call for the entire week.
+  if (allNeedsBatch.length > 0) void loadMetricsBatch(allNeedsBatch);
+  weekSessions = map;
+  weekLoading = false;
+}
+
+// Reload week data when anchor or mode changes
+$effect(() => {
+  if (viewMode === "week") {
+    // Reference calendarAnchor to re-run when it changes
+    void calendarAnchor;
+    void loadWeekData();
+  }
+});
+
+/** Derived week grid data for the HistoryCalendar week view.
+ *  Built from calendarCells (7 day cells) + weekSessions (loaded async). */
+const weekGridDays = $derived.by(() => {
+  if (viewMode !== "week") return [];
+  return calendarCells.map((cell) => ({
+    dayKey: cell.dayKey,
+    label: cell.date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }),
+    sessions: (weekSessions.get(cell.dayKey) ?? [])
+      .filter(
+        (s): s is SessionEntry & { session_start_utc: number; session_end_utc: number } =>
+          s.session_start_utc != null && s.session_end_utc != null,
+      )
+      .map((s) => ({
+        csv_path: s.csv_path,
+        start_utc: s.session_start_utc,
+        end_utc: s.session_end_utc,
+      })),
+  }));
+});
+
+/** Svelte action: draw epoch dots + labels on a 24h canvas timeline for a given day. */
+function drawDayDots(
+  canvas: HTMLCanvasElement,
+  data: { sessions: SessionEntry[]; dayStart: number; labels: LabelRow[] },
+) {
+  renderDayDots(canvas, data);
+  let currentOnMove = (e: MouseEvent) => handleDayDotsHover(canvas, e, data);
+  let currentOnLeave = () => {
+    hoveredLabelId = null;
+    labelTooltip = null;
+    gridTooltip = null;
+  };
+  canvas.addEventListener("mousemove", currentOnMove);
+  canvas.addEventListener("mouseleave", currentOnLeave);
+  return {
+    update(d: { sessions: SessionEntry[]; dayStart: number; labels: LabelRow[] }) {
+      renderDayDots(canvas, d);
+      canvas.removeEventListener("mousemove", currentOnMove);
+      canvas.removeEventListener("mouseleave", currentOnLeave);
+      currentOnMove = (e: MouseEvent) => handleDayDotsHover(canvas, e, d);
+      currentOnLeave = () => {
+        hoveredLabelId = null;
+        labelTooltip = null;
+        gridTooltip = null;
+      };
+      canvas.addEventListener("mousemove", currentOnMove);
+      canvas.addEventListener("mouseleave", currentOnLeave);
+    },
+    destroy() {
+      canvas.removeEventListener("mousemove", currentOnMove);
+      canvas.removeEventListener("mouseleave", currentOnLeave);
+    },
+  };
+}
+
+/** Resolve hover target in a day-dots canvas (week view) for both labels and epoch dots. */
+function handleDayDotsHover(
+  canvas: HTMLCanvasElement,
+  e: MouseEvent,
+  data: { sessions: SessionEntry[]; dayStart: number; labels: LabelRow[] },
+) {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const w = canvas.clientWidth,
+    h = canvas.clientHeight;
+  if (w === 0 || h === 0) return;
+
+  const { sessions, dayStart, labels } = data;
+  const dayEnd = dayStart + 86400;
+
+  // 1 Check label circles first (drawn at bottom of canvas)
+  const dotR = Math.max(3, Math.min(5, h * 0.06));
+  const hitR = dotR + 4; // slightly larger hit area
+  let foundLabel = false;
+  for (const label of labels) {
+    const t = label.eeg_start;
+    if (t < dayStart || t >= dayEnd) continue;
+    const lx = ((t - dayStart) / 86400) * w;
+    const ly = h - dotR - 1;
+    const dist = Math.sqrt((mx - lx) ** 2 + (my - ly) ** 2);
+    if (dist <= hitR) {
+      hoveredLabelId = label.id;
+      labelTooltip = {
+        x: e.clientX,
+        y: e.clientY,
+        text: label.text,
+        time: fmtTimeShort(label.eeg_start),
+      };
+      foundLabel = true;
+      break;
+    }
+  }
+
+  // 2 Check epoch dots if no label was hit
+  if (!foundLabel) {
+    if (hoveredLabelId != null) {
+      hoveredLabelId = null;
+      labelTooltip = null;
+    }
+
+    // Compute layout parameters matching renderDayDots
+    const dotAreaTop = Math.max(10, h * 0.22);
+    const dotAreaH = h - dotAreaTop - 2;
+    const nSessions = sessions.length;
+    const bandH = nSessions > 0 ? dotAreaH / nSessions : dotAreaH;
+
+    let bestDist = Infinity;
+    let bestEpoch: EpochRow | null = null;
+    let bestSIdx = 0;
+
+    for (let sIdx = 0; sIdx < sessions.length; sIdx++) {
+      const ts = getTs(sessions[sIdx].csv_path);
+      if (!ts || ts.length === 0) continue;
+      const eDotR = Math.min(2.5, Math.max(1, bandH * 0.3));
+      const bandY = dotAreaTop + sIdx * bandH;
+
+      for (const row of ts) {
+        if (row.t < dayStart || row.t >= dayEnd) continue;
+        const ex = ((row.t - dayStart) / 86400) * w;
+        const valNorm = Math.max(0, Math.min(1, row.relaxation));
+        const ey = bandY + (1 - valNorm) * (bandH - eDotR * 2) + eDotR;
+        const dist = Math.sqrt((mx - ex) ** 2 + (my - ey) ** 2);
+        if (dist < bestDist && dist <= eDotR + 6) {
+          bestDist = dist;
+          bestEpoch = row;
+          bestSIdx = sIdx;
+        }
+      }
+    }
+
+    if (bestEpoch) {
+      const timeD = new Date(bestEpoch.t * 1000);
+      const hh = String(timeD.getHours()).padStart(2, "0");
+      const mm = String(timeD.getMinutes()).padStart(2, "0");
+      const ss = String(timeD.getSeconds()).padStart(2, "0");
+      gridTooltip = {
+        x: e.clientX,
+        y: e.clientY,
+        hour: timeD.getHours(),
+        row: 0,
+        time: `${hh}:${mm}:${ss}`,
+        values: [
+          { label: "relax", val: bestEpoch.relaxation.toFixed(2), color: sessionColor(bestSIdx) },
+          { label: "engage", val: bestEpoch.engagement.toFixed(2), color: sessionColor(bestSIdx) },
+        ],
+      };
+    } else {
+      gridTooltip = null;
+    }
+  } else {
+    gridTooltip = null;
+  }
+}
+
+function renderDayDots(
+  canvas: HTMLCanvasElement,
+  data: { sessions: SessionEntry[]; dayStart: number; labels: LabelRow[] },
+) {
+  renderDayDotsCanvas(canvas, data, getTs);
+}
+
+// ── Day-grid heatmap (24 cols × 720 rows) ────────────────────────────────
+
+/** Tooltip state for the day-grid canvas. */
+let gridTooltip = $state<{
+  x: number;
+  y: number;
+  hour: number;
+  row: number;
+  time: string;
+  values: { label: string; val: string; color: string }[];
+} | null>(null);
+
+// GridData type is imported from $lib/history-canvas
+
+/** Svelte action: render the 24×720 heatmap grid on canvas. */
+function drawDayGrid(canvas: HTMLCanvasElement, data: GridData) {
+  renderDayGrid(canvas, data);
+  let currentOnMove = (e: MouseEvent) => handleGridHover(canvas, e, data);
+  let currentOnLeave = () => {
+    gridTooltip = null;
+    screenshotPreview = null;
+    hoveredLabelId = null;
+    labelTooltip = null;
+    gridHoveredSessionIdx = null;
+  };
+  let currentOnClick = () => {
+    if (gridHoveredSessionIdx != null) focusSession(gridHoveredSessionIdx);
+  };
+  canvas.addEventListener("mousemove", currentOnMove);
+  canvas.addEventListener("mouseleave", currentOnLeave);
+  canvas.addEventListener("click", currentOnClick);
+  return {
+    update(d: GridData) {
+      renderDayGrid(canvas, d);
+      canvas.removeEventListener("mousemove", currentOnMove);
+      canvas.removeEventListener("mouseleave", currentOnLeave);
+      canvas.removeEventListener("click", currentOnClick);
+      currentOnMove = (e: MouseEvent) => handleGridHover(canvas, e, d);
+      currentOnLeave = () => {
+        gridTooltip = null;
+        screenshotPreview = null;
+        hoveredLabelId = null;
+        labelTooltip = null;
+        gridHoveredSessionIdx = null;
+      };
+      currentOnClick = () => {
+        if (gridHoveredSessionIdx != null) focusSession(gridHoveredSessionIdx);
+      };
+      canvas.addEventListener("mousemove", currentOnMove);
+      canvas.addEventListener("mouseleave", currentOnLeave);
+      canvas.addEventListener("click", currentOnClick);
+    },
+    destroy() {
+      canvas.removeEventListener("mousemove", currentOnMove);
+      canvas.removeEventListener("mouseleave", currentOnLeave);
+      canvas.removeEventListener("click", currentOnClick);
+    },
+  };
+}
+
+/** Resolve grid cell under mouse and build tooltip data. */
+function handleGridHover(canvas: HTMLCanvasElement, e: MouseEvent, data: GridData) {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const w = canvas.clientWidth,
+    h = canvas.clientHeight;
+  const colW = w / GRID_COLS;
+  const rowH = h / GRID_ROWS;
+  const col = Math.floor(mx / colW);
+  const row = Math.floor(my / rowH);
+  if (col < 0 || col >= GRID_COLS || row < 0 || row >= GRID_ROWS) {
+    gridTooltip = null;
+    screenshotPreview = null;
+    return;
+  }
+  const secInDay = col * 3600 + row * GRID_BIN;
+  const cellT = data.dayStart + secInDay;
+  const cellEnd = cellT + GRID_BIN;
+  const hh = String(col).padStart(2, "0");
+  const mm = String(Math.floor((row * GRID_BIN) / 60)).padStart(2, "0");
+  const ss = String((row * GRID_BIN) % 60).padStart(2, "0");
+  const timeStr = `${hh}:${mm}:${ss}`;
+  const values: { label: string; val: string; color: string }[] = [];
+  for (let sIdx = 0; sIdx < data.sessions.length; sIdx++) {
+    const s = data.sessions[sIdx];
+    const ts = getTs(s.csv_path);
+    if (!ts) continue;
+    for (const ep of ts) {
+      if (ep.t >= cellT && ep.t < cellEnd) {
+        values.push(
+          { label: "relax", val: ep.relaxation.toFixed(2), color: sessionColor(sIdx) },
+          { label: "engage", val: ep.engagement.toFixed(2), color: sessionColor(sIdx) },
+        );
+        break;
+      }
+    }
+  }
+  // Check for labels in this cell
+  let foundLabelInCell = false;
+  for (const lbl of data.labels) {
+    if (lbl.eeg_start >= cellT && lbl.eeg_start < cellEnd) {
+      const lColor = dayLabelColors.get(lbl.id) ?? "#f59e0b";
+      values.push({ label: "label", val: lbl.text, color: lColor });
+      if (!foundLabelInCell) {
+        hoveredLabelId = lbl.id;
+        labelTooltip = {
+          x: e.clientX,
+          y: e.clientY,
+          text: lbl.text,
+          time: fmtTimeShort(lbl.eeg_start),
+        };
+        foundLabelInCell = true;
+      }
+    }
+  }
+  if (!foundLabelInCell && hoveredLabelId != null) {
+    hoveredLabelId = null;
+    labelTooltip = null;
+  }
+
+  // Check for screenshot in this cell - show preview if hovering directly on the indicator
+  let foundScreenshot = false;
+  for (let t = cellT; t < cellEnd; t++) {
+    const info = screenshotByTs.get(t);
+    if (info) {
+      const accentHex =
+        getComputedStyle(document.documentElement).getPropertyValue("--color-violet-400").trim() || "#60a5fa";
+      values.push({ label: "📷", val: info.window_title || info.app_name || "screenshot", color: accentHex });
+      // Show image preview only when hovering the cell with a screenshot
+      screenshotPreview = {
+        x: e.clientX,
+        y: e.clientY,
+        src: screenshotUrl(info.filename),
+        title: info.window_title || info.app_name || "",
+      };
+      foundScreenshot = true;
+      break;
+    }
+  }
+  if (!foundScreenshot) screenshotPreview = null;
+
+  // Check for calendar events overlapping this grid cell
+  for (const ev of dayCalendarEvents) {
+    if (ev.start_utc < cellEnd && ev.end_utc >= cellT) {
+      values.push({ label: "cal", val: ev.title, color: "#60a5fa" });
+    }
+  }
+
+  // Determine which session owns the hovered cell (for cross-highlighting)
+  let hovSIdx: number | null = null;
+  for (let sIdx = 0; sIdx < data.sessions.length; sIdx++) {
+    const ts = getTs(data.sessions[sIdx].csv_path);
+    if (!ts) continue;
+    for (const ep of ts) {
+      if (ep.t >= cellT && ep.t < cellEnd) {
+        hovSIdx = sIdx;
+        break;
+      }
+    }
+    if (hovSIdx !== null) break;
+  }
+  gridHoveredSessionIdx = hovSIdx;
+
+  gridTooltip = { x: e.clientX, y: e.clientY, hour: col, row, time: timeStr, values };
+}
+
+function renderDayGrid(canvas: HTMLCanvasElement, data: GridData) {
+  renderDayGridCanvas(canvas, data, getTs);
+}
+
+/** Format a compact duration from total seconds (e.g. "2h 15m"). */
+
+/** Compute day-level aggregate metrics from loaded timeseries. */
+function dayAggregateMetrics(
+  sessionList: SessionEntry[],
+): { avgRelax: number; avgEngage: number; totalEpochs: number } | null {
+  let sumR = 0,
+    sumE = 0,
+    n = 0;
+  for (const s of sessionList) {
+    const ts = getTs(s.csv_path);
+    if (!ts) continue;
+    for (const ep of ts) {
+      sumR += ep.relaxation;
+      sumE += ep.engagement;
+      n++;
+    }
+  }
+  if (n === 0) return null;
+  return { avgRelax: sumR / n, avgEngage: sumE / n, totalEpochs: n };
+}
+
+/** Collect all labels for a day from sessions. */
+
+/** Check if timeseries data is loaded for any session on a given day. */
+function hasTsForDay(sessionsForDay: SessionEntry[]): boolean {
+  return sessionsForDay.some((s) => {
+    const ts = tsCache[s.csv_path];
+    return ts && ts !== "loading" && (ts as EpochRow[]).length > 0;
+  });
+}
+
+// ── Timeline bar ordering ────────────────────────────────────────────────
+/** Sessions paired with their original list index, sorted by duration
+ *  descending for the 24h timeline bar.
+ *
+ *  Widest bars are drawn first (lower in DOM stacking order) so that
+ *  narrower bars always appear on top and remain clickable even when their
+ *  time-range overlaps visually with a longer adjacent session.          */
+const timelineSessions = $derived.by(() =>
+  sessions
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => {
+      const durA = (a.s.session_end_utc ?? 0) - (a.s.session_start_utc ?? 0);
+      const durB = (b.s.session_end_utc ?? 0) - (b.s.session_start_utc ?? 0);
+      return durB - durA; // longest first → drawn at bottom of stack
+    }),
+);
+
+// ── Derived stats ────────────────────────────────────────────────────────
+
+/** Sorted (newest-first) list of local YYYY-MM-DD day keys.
+ *  Computed once from the Rust-supplied `allLocalDays`. */
+const localDays = $derived(allLocalDays.map((d) => d.key));
+
+/** The currently displayed local day key (YYYY-MM-DD). */
+const currentLocalKey = $derived(localDays[currentDayIdx] ?? null);
+
+/** Alias kept for backward-compat with template references. */
+const currentDayKey = $derived(currentLocalKey ?? "");
+
+/** Local midnight (Unix seconds) for the 24h timeline bar. */
+const currentDayStart = $derived.by(() => {
+  if (!currentDayKey) return 0;
+  return dayBoundsFor(currentDayKey).startSec;
+});
+
+// ── Calendar-derived state (depends on localDays) ────────────────────────
+
+/** Session counts per local day - uses cached session lists where available,
+ *  falls back to 1 for days we haven't loaded yet. */
+const daySessionCounts = $derived.by(() => {
+  // Touch the reactive version counter so this derived re-runs when the
+  // day cache is populated (e.g. after week data loads or prefetching).
+  void dayCacheVersion;
+  const counts = new Map<string, number>();
+  for (const d of localDays) {
+    const cached = readDayCache(d);
+    counts.set(d, cached ? cached.length : 1);
+  }
+  return counts;
+});
+
+/** Label for the calendar navigation header. */
+const calendarLabel = $derived.by(() => {
+  const d = calendarAnchor;
+  switch (viewMode) {
+    case "year":
+      return d.getFullYear().toString();
+    case "month":
+      return d.toLocaleDateString(undefined, { year: "numeric", month: "long" });
+    case "week": {
+      const start = new Date(d);
+      start.setDate(start.getDate() - start.getDay());
+      const end = new Date(start);
+      end.setDate(end.getDate() + 6);
+      return `${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} - ${end.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+    }
+    default:
+      return "";
+  }
+});
+
+interface CalendarCell {
+  dayKey: string;
+  date: Date;
+  count: number;
+  inRange: boolean;
+  isToday: boolean;
+}
+
+const calendarCells = $derived.by((): CalendarCell[] => {
+  const today = dateKey(Date.now() / 1000);
+  const cells: CalendarCell[] = [];
+
+  if (viewMode === "month") {
+    const y = calendarAnchor.getFullYear();
+    const m = calendarAnchor.getMonth();
+    const first = new Date(y, m, 1);
+    const startDow = first.getDay();
+    for (let i = startDow - 1; i >= 0; i--) {
+      const d = new Date(y, m, -i);
+      const dk = dateKey(d.getTime() / 1000);
+      cells.push({ dayKey: dk, date: d, count: daySessionCounts.get(dk) ?? 0, inRange: false, isToday: dk === today });
+    }
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+    for (let day = 1; day <= daysInMonth; day++) {
+      const d = new Date(y, m, day);
+      const dk = dateKey(d.getTime() / 1000);
+      cells.push({ dayKey: dk, date: d, count: daySessionCounts.get(dk) ?? 0, inRange: true, isToday: dk === today });
+    }
+    const remaining = 7 - (cells.length % 7);
+    if (remaining < 7) {
+      for (let i = 1; i <= remaining; i++) {
+        const d = new Date(y, m + 1, i);
+        const dk = dateKey(d.getTime() / 1000);
+        cells.push({
+          dayKey: dk,
+          date: d,
+          count: daySessionCounts.get(dk) ?? 0,
+          inRange: false,
+          isToday: dk === today,
+        });
+      }
+    }
+  } else if (viewMode === "week") {
+    const start = new Date(calendarAnchor);
+    start.setDate(start.getDate() - start.getDay());
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(start);
+      d.setDate(d.getDate() + i);
+      const dk = dateKey(d.getTime() / 1000);
+      cells.push({ dayKey: dk, date: d, count: daySessionCounts.get(dk) ?? 0, inRange: true, isToday: dk === today });
+    }
+  } else if (viewMode === "year") {
+    const y = calendarAnchor.getFullYear();
+    const start = new Date(y, 0, 1);
+    const end = new Date(y + 1, 0, 1);
+    for (let d = new Date(start); d < end; d.setDate(d.getDate() + 1)) {
+      const dk = dateKey(d.getTime() / 1000);
+      cells.push({
+        dayKey: dk,
+        date: new Date(d),
+        count: daySessionCounts.get(dk) ?? 0,
+        inRange: true,
+        isToday: dk === today,
+      });
+    }
+  }
+  return cells;
+});
+
+const maxCount = $derived(Math.max(1, ...calendarCells.map((c) => c.count)));
+
+/** Month label for the calendar month view. */
+const calendarMonth = $derived(calendarAnchor.toLocaleString("default", { month: "long", year: "numeric" }));
+
+/** Group year cells by week for the GitHub-style year heatmap. */
+const yearWeeks = $derived.by(() => {
+  if (viewMode !== "year") return [];
+  const weeks: CalendarCell[][] = [];
+  let currentWeek: CalendarCell[] = [];
+  const firstDow = calendarCells[0]?.date.getDay() ?? 0;
+  for (let i = 0; i < firstDow; i++)
+    currentWeek.push({ dayKey: "", date: new Date(), count: 0, inRange: false, isToday: false });
+  for (const cell of calendarCells) {
+    if (cell.date.getDay() === 0 && currentWeek.length > 0) {
+      weeks.push(currentWeek);
+      currentWeek = [];
+    }
+    currentWeek.push(cell);
+  }
+  if (currentWeek.length > 0) weeks.push(currentWeek);
+  return weeks;
+});
+
+/** Consecutive-day streak in LOCAL calendar days. */
+const recordingStreak = $derived.by((): number => {
+  if (localDays.length === 0) return 0;
+  const daySet = new Set(localDays);
+  const today = dateKey(Date.now() / 1000);
+  let streak = 0;
+  const d = new Date();
+  if (!daySet.has(today)) d.setDate(d.getDate() - 1);
+  for (let i = 0; i < 365; i++) {
+    const k = dateToLocalKey(d);
+    if (daySet.has(k)) {
+      streak++;
+      d.setDate(d.getDate() - 1);
+    } else break;
+  }
+  return streak;
+});
+
+const totalHours = $derived((historyStats?.total_secs ?? 0) / 3600);
+const weekTrend = $derived.by(() => {
+  if (!historyStats) return null;
+  const tw = historyStats.this_week_secs / 3600;
+  const lw = historyStats.last_week_secs / 3600;
+  if (tw === 0 && lw === 0) return null;
+  return { thisWeek: tw, lastWeek: lw, pctChange: lw > 0 ? ((tw - lw) / lw) * 100 : 0 };
+});
+
+/** Collect ALL labels across every session on the current day, for cross-session matching. */
+const allDayLabels = $derived.by((): LabelRow[] => sessions.flatMap((s) => s.labels));
+/** Rainbow color map for all labels across the current day. */
+const dayLabelColors = $derived(assignLabelRainbowColors(allDayLabels));
+
+/** Reactive relations for the currently hovered label. */
+const hoveredLabelRelations = $derived.by(() => {
+  if (hoveredLabelId == null) return null;
+  const lbl = allDayLabels.find((l) => l.id === hoveredLabelId);
+  if (!lbl) return null;
+  return labelRelations(lbl, allDayLabels);
+});
+
+/** Show the fixed label tooltip near the cursor for a given label dot. */
+function showLabelTooltip(e: MouseEvent | FocusEvent, label: LabelRow, showEnd = false) {
+  hoveredLabelId = label.id;
+  let x: number, y: number;
+  if ("clientX" in e) {
+    x = e.clientX;
+    y = e.clientY;
+  } else {
+    // FocusEvent: position tooltip near the element
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    x = rect.left + rect.width / 2;
+    y = rect.top;
+  }
+  labelTooltip = {
+    x,
+    y,
+    text: label.text,
+    time: fmtTimeShort(label.eeg_start),
+    timeEnd: showEnd ? fmtTime(label.eeg_end) : undefined,
+  };
+}
+function hideLabelTooltip() {
+  hoveredLabelId = null;
+  labelTooltip = null;
+}
+
+/** Svelte action: draw a mini sparkline on a canvas element. */
+function drawSparkline(canvas: HTMLCanvasElement, ts: EpochRow[]) {
+  renderSparkline(canvas, ts);
+  return {
+    update(newTs: EpochRow[]) {
+      renderSparkline(canvas, newTs);
+    },
+  };
+}
+// renderSparkline is imported from $lib/history-canvas
+
+// ── Grid↔session cross-highlighting (#8) ─────────────────────────────────
+/** Session index (into `sessions[]`) hovered from the grid canvas.
+ *  Drives highlight on the session row below.                           */
+let gridHoveredSessionIdx = $state<number | null>(null);
+
+/** Scroll to and expand a session by index - triggered by clicking the grid. */
+function focusSession(sIdx: number) {
+  const s = sessions[sIdx];
+  if (!s) return;
+  expanded[s.csv_path] = true;
+  loadSleep(s.csv_path);
+  loadMetrics(s.csv_path);
+  void loadLocation(s.csv_path);
+  void loadEmbedCount(s.csv_path);
+  // Scroll to the session row after DOM update
+  requestAnimationFrame(() => {
+    const el = document.getElementById(`session-row-${sIdx}`);
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  });
+}
+
+// ── Keyboard navigation ──────────────────────────────────────────────────
+function handleKeydown(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA") return;
+  if (e.key === "ArrowLeft") {
+    e.preventDefault();
+    if (viewMode === "day") loadDay(currentDayIdx - 1);
+    else calendarNav(-1);
+  }
+  if (e.key === "ArrowRight") {
+    e.preventDefault();
+    if (viewMode === "day") loadDay(currentDayIdx + 1);
+    else calendarNav(1);
+  }
+  // View mode shortcuts: 1=year 2=month 3=week 4=day
+  if (e.key === "1") {
+    e.preventDefault();
+    setViewMode("year");
+  }
+  if (e.key === "2") {
+    e.preventDefault();
+    setViewMode("month");
+  }
+  if (e.key === "3") {
+    e.preventDefault();
+    setViewMode("week");
+  }
+  if (e.key === "4") {
+    e.preventDefault();
+    setViewMode("day");
+  }
+}
+
+// ── Mount ────────────────────────────────────────────────────────────────
+onMount(async () => {
+  // Wire up titlebar store
+  hBar.active = true;
+  hCbs.prev = () => loadDay(currentDayIdx - 1);
+  hCbs.next = () => loadDay(currentDayIdx + 1);
+  hCbs.toggleCompare = () => {
+    if (compareMode) exitCompareMode();
+    else compareMode = true;
+  };
+  hCbs.openCompare = openQuickCompare;
+  hCbs.toggleLabels = () => {
+    showLabels = !showLabels;
+    if (showLabels && allLabels.length === 0) loadLabels();
+  };
+  hCbs.reload = () => loadDay(currentDayIdx);
+  hCbs.setViewMode = setViewMode;
+  hCbs.calendarPrev = () => calendarNav(-1);
+  hCbs.calendarNext = () => calendarNav(1);
+
+  try {
+    allLocalDays = await daemonInvoke<LocalDayInfo[]>("list_local_session_days", { tzOffsetSecs: tzOffsetSecs });
+    // biome-ignore lint/suspicious/noConsole: temporary diagnostic — remove after confirming fix
+    console.warn(`[history] ${allLocalDays.length} local days, tzOffset=${tzOffsetSecs}`);
+  } catch (e) {
+    // biome-ignore lint/suspicious/noConsole: intentional error logging for debug
+    console.error("list_local_session_days failed:", e);
+  }
+  daysLoading = false;
+  // Anchor the calendar to the most recent session month so switching
+  // to month/year view always shows a populated heatmap.
+  if (localDays.length > 0) {
+    const [cy, cm, cd] = localDays[0].split("-").map(Number);
+    calendarAnchor = new Date(cy, cm - 1, cd);
+  }
+  if (localDays.length > 0) await loadDay(0);
+  // Load screenshot port
+  daemonInvoke<[string, number]>("get_screenshots_dir")
+    .then(([, port]) => {
+      screenshotPort = port;
+    })
+    .catch((_e) => {});
+  // Load aggregate stats lazily - not needed for initial render
+  daemonInvoke<HistoryStatsData>("get_history_stats")
+    .then((s) => {
+      historyStats = s;
+    })
+    .catch((_e) => {});
+});
+
+onDestroy(() => {
+  hBar.active = false;
+});
+
+// Keep titlebar store in sync with local reactive state
+$effect(() => {
+  hBar.daysLoading = daysLoading;
+  hBar.dayCount = localDays.length;
+  hBar.currentDayIdx = currentDayIdx;
+  hBar.currentDayLabel = currentLocalKey ? fmtDayKey(currentLocalKey) : "";
+  hBar.compareMode = compareMode;
+  hBar.compareCount = compareSelected.length;
+  hBar.showLabels = showLabels;
+  hBar.viewMode = viewMode;
+  hBar.calendarLabel = calendarLabel;
+});
+
+useWindowTitle("window.title.history");
+</script>
+
+<main class="h-full min-h-0 bg-background text-foreground flex flex-col overflow-hidden">
+<div class="contents" onkeydown={handleKeydown} tabindex="-1" role="presentation">
+
+  <!-- ── Labels browser panel ─────────────────────────────────────────────── -->
+  {#if showLabels}
+    <div class="shrink-0 border-b border-border dark:border-white/[0.06]
+                bg-muted/30 dark:bg-white/[0.01] px-4 py-3 flex flex-col gap-2">
+      <div class="flex items-center gap-2">
+        <span class="text-[0.62rem] font-semibold text-foreground/80">{t("history.labels")} ({allLabels.length})</span>
+        <input
+          bind:value={labelSearchQuery}
+          placeholder={t("common.search")}
+          class="flex-1 h-6 text-[0.62rem] rounded border border-border dark:border-white/[0.08]
+                 bg-background px-2 outline-none focus:ring-1 focus:ring-ring/50" />
+        <button onclick={async () => { await invoke("open_label_window"); }}
+                class="text-[0.58rem] font-medium text-primary hover:text-primary/80 transition-colors">
+          + {t("history.addLabel")}
+        </button>
+        <button onclick={() => showLabels = false}
+                aria-label={t("common.close")}
+                class="text-[0.7rem] text-muted-foreground/60 hover:text-foreground">✕</button>
+      </div>
+      <div class="max-h-32 overflow-y-auto flex flex-col gap-1 scrollbar-thin">
+        {#each filteredLabels as label (label.id)}
+          <div class="flex items-center gap-2 text-[0.6rem] rounded px-2 py-1
+                      hover:bg-muted/60 dark:hover:bg-white/[0.03] group">
+            <span class="text-foreground/80 flex-1 truncate">{label.text}</span>
+            <span class="text-muted-foreground/40 tabular-nums shrink-0">{fmtTime(label.eeg_start)}</span>
+            <button onclick={() => removeLabel(label.id)}
+                    aria-label={t("common.delete")}
+                    class="opacity-0 group-hover:opacity-60 hover:!opacity-100 text-red-500 shrink-0">✕</button>
+          </div>
+        {/each}
+        {#if filteredLabels.length === 0}
+          <span class="text-[0.6rem] text-muted-foreground/40 italic px-2">{t("common.noResults")}</span>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
+  <!-- ── Main scroll area ──────────────────────────────────────────────────── -->
+  <div class="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-3 scrollbar-thin">
+
+    <!-- ── Stats bar (always visible) ──────────────────────────────────── -->
+    {#if !daysLoading && localDays.length > 0}
+      <HistoryStatsBar
+        daysCount={localDays.length}
+        {totalHours}
+        {recordingStreak}
+        {historyStats}
+        {weekTrend}
+      />
+    {/if}
+
+    <!-- ── Calendar heatmap views (year / month / week) ──────────────── -->
+      {#if viewMode !== "day"}
+        <HistoryCalendar
+          {viewMode}
+          {calendarCells}
+          {yearWeeks}
+          {maxCount}
+          {heatColor}
+          {navigateToDay}
+          {recordingStreak}
+          {calendarMonth}
+          {weekGridDays}
+          drawDayDots={() => {}}
+          renderDayDots={() => {}}
+          handleDayDotsHover={() => {}}
+          drawDayGrid={() => {}}
+          renderDayGrid={() => {}}
+          handleGridHover={() => {}}
+          gridDataForDay={() => null}
+          daySessionsMap={new Map()}
+          gridTooltip={null}
+        />
+
+      <!-- ── Current day view ──────────────────────────────────────────── -->
+      {:else if currentLocalKey}
+        <div class="flex flex-col gap-1.5" transition:fade={{ duration: 120 }}>
+
+          <!-- Date header row -->
+          <div class="flex items-center gap-2">
+            <span class="text-[0.62rem] font-semibold tracking-widest uppercase text-muted-foreground/70">
+              {dateLabel(currentDayKey)}
+            </span>
+            <span class="text-[0.52rem] text-muted-foreground/40">
+              {sessions.length} {sessions.length === 1 ? "session" : "sessions"}
+            </span>
+            {#if dayLoading}
+              <Spinner size="w-2.5 h-2.5" class="text-muted-foreground/40" />
+            {/if}
+            <Separator class="flex-1 bg-border dark:bg-white/[0.06]" />
+          </div>
+
+          {#if dayCalendarEvents.length > 0}
+            <div class="rounded-md border border-blue-500/20 bg-blue-500/5 px-2.5 py-2">
+              <div class="flex flex-wrap items-center gap-1.5">
+                <span class="text-[0.52rem] uppercase tracking-wider text-blue-700/80 dark:text-blue-300/80">Calendar overlay</span>
+                <span class="text-[0.5rem] text-muted-foreground/70">{dayCalendarEvents.length} event{dayCalendarEvents.length === 1 ? "" : "s"}</span>
+              </div>
+              <div class="mt-1 flex flex-wrap gap-1.5">
+                {#each dayCalendarEvents.slice(0, 6) as ev (ev.id + ev.start_utc)}
+                  <span class="rounded-full border border-blue-500/20 bg-background/70 px-2 py-0.5 text-[0.53rem] text-foreground/80">
+                    {new Date(ev.start_utc * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} {ev.title}
+                  </span>
+                {/each}
+              </div>
+            </div>
+          {/if}
+
+          <!-- Day grid heatmap (24 hour-columns × 720 five-second rows) -->
+          {#if sessions.length > 0}
+            {@const dayLbls = sessions.flatMap(s => s.labels)}
+            {@const anyTs   = sessions.some(s => { const ts = tsCache[s.csv_path]; return ts && ts !== "loading" && (ts as EpochRow[]).length > 0; })}
+
+            <div class="rounded-lg border border-border dark:border-white/[0.06]
+                        bg-white dark:bg-[#14141e] overflow-hidden relative">
+              <!-- Hour labels header -->
+              <div class="relative h-5 bg-muted/30 dark:bg-white/[0.02] select-none flex">
+                {#each Array(24) as _, hr}
+                  <span class="flex-1 text-center text-[6.5px] leading-[20px] tabular-nums
+                               text-muted-foreground/40 border-r border-border/10 dark:border-white/[0.03] last:border-r-0
+                               {hr % 6 === 0 ? 'font-semibold text-muted-foreground/60' : ''}">
+                    {String(hr).padStart(2,"0")}
+                  </span>
+                {/each}
+              </div>
+              <!-- Heatmap canvas (scrollable) -->
+              <div class="overflow-y-auto max-h-[420px] scrollbar-thin relative">
+                {#if anyTs}
+                  {#key sessions.map(s => tsCache[s.csv_path] === "loading" ? "l" : "r").join(",") + ":" + dayScreenshots.length}
+                    <canvas class="w-full cursor-crosshair" style="height:720px;"
+                            use:drawDayGrid={{ sessions, dayStart: currentDayStart, labels: dayLbls, screenshotTs: screenshotTsSet, calendarEvents: dayCalendarEvents as CalendarOverlayEvent[] }}>
+                    </canvas>
+                  {/key}
+                {:else}
+                  <!-- Skeleton while timeseries loads -->
+                  <div class="w-full h-40 flex items-center justify-center">
+                    <Spinner size="w-4 h-4" class="text-muted-foreground/30" />
+                  </div>
+                {/if}
+                <!-- Minute labels on the left edge -->
+                {#if anyTs}
+                  <div class="absolute top-0 left-0 pointer-events-none" style="height:720px;">
+                    {#each [0,15,30,45] as min}
+                      <span class="absolute left-0.5 text-[5.5px] text-muted-foreground/25 tabular-nums"
+                            style="top:{(min / 60) * 100}%;">
+                        :{String(min).padStart(2,"0")}
+                      </span>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+              <!-- Session color legend -->
+              <div class="flex items-center gap-3 px-2.5 py-1 border-t border-border/20 dark:border-white/[0.03]
+                          bg-muted/10 dark:bg-white/[0.005]">
+                {#each sessions as session, idx (session.csv_path)}
+                  {#if session.session_start_utc}
+                    <div class="flex items-center gap-1">
+                      <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background:{sessionColor(idx)}"></span>
+                      <span class="text-[0.46rem] text-muted-foreground/50 tabular-nums">
+                        {fmtTimeShort(session.session_start_utc!)} → {fmtTimeShort(session.session_end_utc!)}
+                      </span>
+                    </div>
+                  {/if}
+                {/each}
+                {#if dayLbls.length > 0}
+                  <div class="flex items-center gap-1 ml-auto">
+                    {#each dayLbls as label (label.id)}
+                      {@const lColor = dayLabelColors.get(label.id) ?? "#f59e0b"}
+                      {@const isExact = hoveredLabelRelations?.exactIds.has(label.id) ?? false}
+                      {@const isClose = hoveredLabelRelations?.closeIds.has(label.id) ?? false}
+                      {@const isHoveredSelf = hoveredLabelId === label.id}
+                      <button
+                        type="button"
+                        aria-label={label.text}
+                        class="block w-1.5 h-1.5 rounded-full cursor-default transition-all duration-150
+                               p-0 border-0 appearance-none bg-transparent
+                               {isHoveredSelf ? 'scale-[2] ring-1 ring-white/50 shadow-md' :
+                                isExact ? 'scale-[1.6] ring-[0.5px] ring-white/40' :
+                                isClose ? 'scale-[1.3] brightness-125' : ''}"
+                        style="background:{lColor};
+                               {isExact && !isHoveredSelf ? `box-shadow: 0 0 4px 1px ${lColor}` : ''}"
+                        onmouseenter={(e) => showLabelTooltip(e, label)}
+                        onmouseleave={hideLabelTooltip}
+                        onfocus={(e) => showLabelTooltip(e, label)}
+                        onblur={hideLabelTooltip}>
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            </div>
+          {:else if dayLoading}
+            <div class="rounded-lg border border-border dark:border-white/[0.06]
+                        bg-white dark:bg-[#14141e] p-4 flex items-center justify-center">
+              <Spinner size="w-4 h-4" class="text-muted-foreground/30" />
+            </div>
+          {/if}
+
+          <!-- #10: Daily aggregate summary card -->
+          {#if sessions.length > 1}
+            {@const dayTotalDur = totalDurationSecs(sessions)}
+            {@const dayAgg = dayAggregateMetrics(sessions)}
+            {@const dayLblCount = sessions.reduce((a, s) => a + s.labels.length, 0)}
+            <div class="rounded-lg border border-border/50 dark:border-white/[0.06]
+                        bg-muted/20 dark:bg-white/[0.01] px-3 py-2
+                        flex items-center gap-4 text-[0.55rem]">
+              <div class="flex items-center gap-1">
+                <span class="text-muted-foreground/50">Total:</span>
+                <span class="font-semibold tabular-nums">{fmtDurCompact(dayTotalDur)}</span>
+              </div>
+              {#if dayAgg}
+                <div class="flex items-center gap-1">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-500/70"></span>
+                  <span class="text-muted-foreground/50">Avg relax:</span>
+                  <span class="font-semibold tabular-nums">{dayAgg.avgRelax.toFixed(2)}</span>
+                </div>
+                <div class="flex items-center gap-1">
+                  <span class="w-1.5 h-1.5 rounded-full bg-amber-500/70"></span>
+                  <span class="text-muted-foreground/50">Avg engage:</span>
+                  <span class="font-semibold tabular-nums">{dayAgg.avgEngage.toFixed(2)}</span>
+                </div>
+              {/if}
+              {#if dayLblCount > 0}
+                <div class="flex items-center gap-1">
+                  <span class="text-muted-foreground/50">Labels:</span>
+                  <span class="font-semibold tabular-nums">{dayLblCount}</span>
+                </div>
+              {/if}
+              <div class="flex items-center gap-1 ml-auto">
+                <span class="text-muted-foreground/40">{sessions.length} sessions</span>
+              </div>
+            </div>
+          {/if}
+
+          <!-- #11: Health / Oura Ring daily overlay card -->
+          {#if currentLocalKey && getHealthData(currentLocalKey)}
+            {@const hd = getHealthData(currentLocalKey)!}
+            <div class="rounded-lg border border-border/50 dark:border-white/[0.06]
+                        bg-muted/20 dark:bg-white/[0.01] px-3 py-2.5
+                        flex flex-col gap-1.5">
+              <div class="flex items-center gap-1.5">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round"
+                     class="w-3 h-3 text-rose-500/70">
+                  <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>
+                </svg>
+                <span class="text-[0.52rem] font-semibold tracking-widest uppercase text-muted-foreground/60">
+                  Health
+                </span>
+              </div>
+              <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[0.55rem]">
+                {#if hd.oura_sleep_score != null}
+                  <div class="flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 rounded-full bg-indigo-500/70"></span>
+                    <span class="text-muted-foreground/50">Sleep:</span>
+                    <span class="font-semibold tabular-nums">{Math.round(hd.oura_sleep_score)}</span>
+                  </div>
+                {/if}
+                {#if hd.oura_readiness_score != null}
+                  <div class="flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500/70"></span>
+                    <span class="text-muted-foreground/50">Readiness:</span>
+                    <span class="font-semibold tabular-nums">{Math.round(hd.oura_readiness_score)}</span>
+                  </div>
+                {/if}
+                {#if hd.oura_activity_score != null}
+                  <div class="flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 rounded-full bg-amber-500/70"></span>
+                    <span class="text-muted-foreground/50">Activity:</span>
+                    <span class="font-semibold tabular-nums">{Math.round(hd.oura_activity_score)}</span>
+                  </div>
+                {/if}
+                {#if hd.total_steps > 0}
+                  <div class="flex items-center gap-1">
+                    <span class="text-muted-foreground/50">Steps:</span>
+                    <span class="font-semibold tabular-nums">{hd.total_steps.toLocaleString()}</span>
+                  </div>
+                {/if}
+                {#if hd.heart_rate_samples > 0}
+                  <div class="flex items-center gap-1">
+                    <span class="text-muted-foreground/50">HR:</span>
+                    <span class="font-semibold tabular-nums">{hd.heart_rate_samples.toLocaleString()}</span>
+                    <span class="text-muted-foreground/40">samples</span>
+                  </div>
+                {/if}
+                {#if hd.sleep_samples > 0}
+                  <div class="flex items-center gap-1">
+                    <span class="text-muted-foreground/50">Sleep:</span>
+                    <span class="font-semibold tabular-nums">{hd.sleep_samples}</span>
+                    <span class="text-muted-foreground/40">samples</span>
+                  </div>
+                {/if}
+                {#if hd.workouts > 0}
+                  <div class="flex items-center gap-1">
+                    <span class="text-muted-foreground/50">Workouts:</span>
+                    <span class="font-semibold tabular-nums">{hd.workouts}</span>
+                  </div>
+                {/if}
+                {#if hd.mindfulness_sessions > 0}
+                  <div class="flex items-center gap-1">
+                    <span class="text-muted-foreground/50">Mindfulness:</span>
+                    <span class="font-semibold tabular-nums">{hd.mindfulness_sessions}</span>
+                  </div>
+                {/if}
+              </div>
+            </div>
+          {/if}
+
+          <!-- Session list (lazy chart rendering via IntersectionObserver) -->
+          {#if dayLoading && sessions.length === 0}
+            <div class="flex items-center gap-2 py-4 text-muted-foreground/50">
+              <Spinner size="w-3.5 h-3.5" />
+              <span class="text-[0.65rem]">{t("common.loading")}</span>
+            </div>
+          {:else if sessions.length === 0}
+            <div class="py-6 text-center">
+              <span class="text-[0.65rem] text-muted-foreground/40 italic">
+                {t("history.noSessions")}
+              </span>
+            </div>
+          {:else}
+            {#each sessions as session, idx (session.csv_path)}
+              {@const isExpanded = !!expanded[session.csv_path]}
+              {@const color = sessionColor(idx)}
+              {@const dur = fmtDuration(session.session_start_utc, session.session_end_utc)}
+              {@const isHovered = hoveredSession === session.csv_path}
+              {@const isGridHighlighted = gridHoveredSessionIdx === idx}
+
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                id="session-row-{idx}"
+                use:inview={() => { renderedRows = new Set([...renderedRows, session.csv_path]); }}
+                class="rounded-lg border overflow-hidden transition-all duration-150
+                       {isExpanded
+                         ? 'border-border dark:border-white/[0.1] bg-white dark:bg-[#14141e]'
+                         : isGridHighlighted
+                           ? 'border-primary/40 dark:border-primary/30 bg-primary/[0.06] dark:bg-primary/[0.04] ring-1 ring-primary/20'
+                           : isHovered
+                             ? 'border-border/60 dark:border-white/[0.06] bg-muted/20 dark:bg-white/[0.015]'
+                             : 'border-transparent bg-transparent'}"
+                onmouseenter={() => hoveredSession = session.csv_path}
+                onmouseleave={() => hoveredSession = null}>
+
+                <!-- Session summary row -->
+                <div
+                  class="flex items-center gap-2 w-full px-3 py-1.5 text-left cursor-pointer
+                         hover:bg-muted/30 dark:hover:bg-white/[0.02] transition-colors rounded-lg"
+                  role="button" tabindex="0"
+                  onclick={() => compareMode ? toggleCompareSelect(session.csv_path) : toggleExpand(session.csv_path)}
+                  onkeydown={(e) => e.key === "Enter" && (compareMode ? toggleCompareSelect(session.csv_path) : toggleExpand(session.csv_path))}>
+
+                  <!-- Compare checkbox -->
+                  {#if compareMode}
+                    {@const isSelected = compareSelected.includes(session.csv_path)}
+                    {@const atLimit = compareSelected.length >= 2 && !isSelected}
+                    <div class="w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors
+                                {isSelected ? 'bg-primary' : atLimit ? 'border border-border/50 opacity-40' : 'border border-border dark:border-white/20'}">
+                      {#if isSelected}
+                        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"
+                             stroke-linecap="round" stroke-linejoin="round" class="w-2.5 h-2.5">
+                          <polyline points="20 6 9 17 4 12"/>
+                        </svg>
+                      {/if}
+                    </div>
+                  {/if}
+
+                  <span class="w-2 h-2 rounded-full shrink-0" style="background:{color}"></span>
+
+                  <span class="text-[0.68rem] font-semibold text-foreground tabular-nums">
+                    {fmtTimeShort(session.session_start_utc!)}
+                    <span class="text-muted-foreground/40 font-normal">→</span>
+                    {fmtTimeShort(session.session_end_utc!)}
+                  </span>
+                  <span class="text-[0.58rem] text-muted-foreground/60 tabular-nums">{dur}</span>
+
+                  <!-- Sparkline - only mounted after the row enters the viewport -->
+                  {#if renderedRows.has(session.csv_path) && getTs(session.csv_path)}
+                    {@const ts = getTs(session.csv_path)!}
+                    <canvas class="h-3 w-16 shrink-0 rounded-sm opacity-60"
+                            use:drawSparkline={ts}></canvas>
+                  {:else if renderedRows.has(session.csv_path) && tsCache[session.csv_path] === "loading"}
+                    <div class="h-3 w-16 rounded-sm bg-muted/30 animate-pulse shrink-0"></div>
+                  {/if}
+
+                  {#if session.device_name}
+                    <span class="text-[0.56rem] text-muted-foreground/40 truncate min-w-0">
+                      {session.device_name}
+                    </span>
+                  {/if}
+
+                  {#if session.labels.length > 0}
+                    <!-- svelte-ignore a11y_click_events_have_key_events -->
+                    <div class="flex items-center gap-0.5 shrink-0" role="toolbar" tabindex="-1" aria-label="Labels" onclick={(e) => e.stopPropagation()}>
+                      {#each session.labels as label (label.id)}
+                        {@const lColor = dayLabelColors.get(label.id) ?? "#f59e0b"}
+                        {@const isExact = hoveredLabelRelations?.exactIds.has(label.id) ?? false}
+                        {@const isClose = hoveredLabelRelations?.closeIds.has(label.id) ?? false}
+                        {@const isHoveredSelf = hoveredLabelId === label.id}
+                        <button
+                          type="button"
+                          aria-label={label.text}
+                          class="block w-2 h-2 rounded-full cursor-default transition-all duration-150
+                                 p-0 border-0 appearance-none bg-transparent
+                                 {isHoveredSelf ? 'scale-[1.8] ring-2 ring-white/50 shadow-lg' :
+                                  isExact ? 'scale-150 ring-[1.5px] ring-white/40 shadow-md' :
+                                  isClose ? 'scale-125 brightness-125' : ''}"
+                          style="background:{lColor};
+                                 {isExact && !isHoveredSelf ? `box-shadow: 0 0 6px 1px ${lColor}` : ''}
+                                 {isClose && !isExact ? `box-shadow: 0 0 4px 0px ${lColor}` : ''}"
+                          onmouseenter={(e) => showLabelTooltip(e, label)}
+                          onmouseleave={hideLabelTooltip}
+                          onfocus={(e) => showLabelTooltip(e, label)}
+                          onblur={hideLabelTooltip}>
+                        </button>
+                      {/each}
+                    </div>
+                  {/if}
+
+                  <span class="flex-1"></span>
+                  <span class="text-[0.5rem] text-muted-foreground/30 tabular-nums shrink-0">
+                    {fmtSize(session.file_size_bytes)}
+                  </span>
+
+                  {#if !compareMode}
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                         class="w-3 h-3 text-muted-foreground/30 transition-transform duration-200 shrink-0
+                                {isExpanded ? 'rotate-180' : ''}">
+                      <path d="M6 9l6 6 6-6"/>
+                    </svg>
+                  {/if}
+                </div>
+
+                <!-- ── Expanded details ─────────────────────────────────── -->
+                {#if isExpanded}
+                  <Separator class="bg-border dark:bg-white/[0.06]" />
+                  <div class="px-3.5 py-3 flex flex-col gap-3">
+                    <!-- Stats grid -->
+                    <div class="grid grid-cols-3 gap-x-4 gap-y-2">
+                      <div class="flex flex-col gap-0.5">
+                        <span class="text-[0.48rem] font-semibold tracking-widest uppercase text-muted-foreground/50">{t("history.startTime")}</span>
+                        <span class="text-[0.65rem] text-foreground tabular-nums">{fmtTime(session.session_start_utc)}</span>
+                      </div>
+                      <div class="flex flex-col gap-0.5">
+                        <span class="text-[0.48rem] font-semibold tracking-widest uppercase text-muted-foreground/50">{t("history.endTime")}</span>
+                        <span class="text-[0.65rem] text-foreground tabular-nums">{fmtTime(session.session_end_utc)}</span>
+                      </div>
+                      <div class="flex flex-col gap-0.5">
+                        <span class="text-[0.48rem] font-semibold tracking-widest uppercase text-muted-foreground/50">{t("history.duration")}</span>
+                        <span class="text-[0.65rem] text-foreground">{dur}</span>
+                      </div>
+                      <div class="flex flex-col gap-0.5">
+                        <span class="text-[0.48rem] font-semibold tracking-widest uppercase text-muted-foreground/50">{t("history.samples")}</span>
+                        <span class="text-[0.65rem] text-foreground tabular-nums">{fmtSamples(session.total_samples)}</span>
+                      </div>
+                      {#if session.device_name}
+                        <div class="flex flex-col gap-0.5">
+                          <span class="text-[0.48rem] font-semibold tracking-widest uppercase text-muted-foreground/50">{t("history.device")}</span>
+                          <span class="text-[0.65rem] text-foreground">{session.device_name}</span>
+                        </div>
+                      {/if}
+                      {#if session.battery_pct != null}
+                        <div class="flex flex-col gap-0.5">
+                          <span class="text-[0.48rem] font-semibold tracking-widest uppercase text-muted-foreground/50">{t("history.battery")}</span>
+                          <span class="text-[0.65rem] text-foreground">{session.battery_pct.toFixed(0)}%</span>
+                        </div>
+                      {/if}
+                      {#if session.avg_snr_db != null}
+                        <div class="flex flex-col gap-0.5">
+                          <span class="text-[0.48rem] font-semibold tracking-widest uppercase text-muted-foreground/50">{t("history.snr")}</span>
+                          <span class="text-[0.65rem] text-foreground {session.avg_snr_db >= 10 ? 'text-emerald-500' : session.avg_snr_db >= 0 ? 'text-amber-500' : 'text-red-400'}">{session.avg_snr_db.toFixed(1)} dB</span>
+                        </div>
+                      {/if}
+                    </div>
+
+                    <!-- Metrics & Charts -->
+                    <SessionDetail
+                      loading={metricsCache[session.csv_path] === "loading"}
+                      metrics={getMetrics(session.csv_path)}
+                      timeseries={getTs(session.csv_path)} />
+
+                    <!-- Location map (GPS track or IP-based fallback) -->
+                    {#if locationCache[session.csv_path] === "loading"}
+                      <div class="flex items-center gap-2 py-1">
+                        <Spinner size="w-3 h-3" class="text-muted-foreground/40" />
+                        <span class="text-[0.55rem] text-muted-foreground/40">Loading location...</span>
+                      </div>
+                    {:else if session.csv_path in locationCache}
+                      {@const gpsPoints = getLocation(session.csv_path) ?? []}
+                      <div class="flex flex-col gap-1">
+                        {#if gpsPoints.length > 0}
+                          <div class="flex items-center gap-1.5">
+                            <span class="text-[0.48rem] font-semibold tracking-widest uppercase text-muted-foreground/50">GPS Track</span>
+                            <span class="text-[0.48rem] text-muted-foreground/40">{gpsPoints.length} fix{gpsPoints.length === 1 ? "" : "es"}</span>
+                          </div>
+                        {/if}
+                        <SessionMap points={gpsPoints} color={color} height="180px" />
+                      </div>
+                    {/if}
+
+                    <!-- HNSW / SQLite embedding count -->
+                    {#if embedCountCache[session.csv_path] !== undefined && embedCountCache[session.csv_path] !== "loading" && (embedCountCache[session.csv_path] as number) > 0}
+                      <div class="flex items-center gap-1.5">
+                        <span class="text-[0.48rem] font-semibold tracking-widest uppercase text-muted-foreground/50">Embeddings</span>
+                        <span class="text-[0.65rem] font-mono tabular-nums text-foreground">{(embedCountCache[session.csv_path] as number).toLocaleString()}</span>
+                        <span class="text-[0.48rem] text-muted-foreground/40">epochs in HNSW/SQLite</span>
+                      </div>
+                    {/if}
+
+                    <!-- Labels (rainbow circles with hover interaction) -->
+                    {#if session.labels.length > 0}
+                      <div class="flex flex-col gap-1.5">
+                        <span class="text-[0.48rem] font-semibold tracking-widest uppercase text-muted-foreground/50">
+                          {t("history.labels")}
+                        </span>
+                        <div class="flex flex-wrap items-center gap-2">
+                          {#each session.labels as label (label.id)}
+                            {@const lColor = dayLabelColors.get(label.id) ?? "#f59e0b"}
+                            {@const isExact = hoveredLabelRelations?.exactIds.has(label.id) ?? false}
+                            {@const isClose = hoveredLabelRelations?.closeIds.has(label.id) ?? false}
+                            {@const isHoveredSelf = hoveredLabelId === label.id}
+                            <button
+                              type="button"
+                              aria-label={label.text}
+                              class="block w-3 h-3 rounded-full cursor-default ring-1 ring-white/20 shadow-sm
+                                     transition-all duration-150 p-0 border-0 appearance-none bg-transparent
+                                     {isHoveredSelf ? 'scale-[2] ring-2 ring-white/60 shadow-lg z-10' :
+                                      isExact ? 'scale-[1.7] ring-[1.5px] ring-white/50 shadow-md z-10' :
+                                      isClose ? 'scale-[1.4] brightness-130' : 'hover:scale-150'}"
+                              style="background:{lColor};
+                                     {isExact && !isHoveredSelf ? `box-shadow: 0 0 8px 2px ${lColor}` : ''}
+                                     {isClose && !isExact ? `box-shadow: 0 0 5px 1px ${lColor}` : ''}"
+                              onmouseenter={(e) => showLabelTooltip(e, label, true)}
+                              onmouseleave={hideLabelTooltip}
+                              onfocus={(e) => showLabelTooltip(e, label, true)}
+                              onblur={hideLabelTooltip}>
+                            </button>
+                          {/each}
+                        </div>
+                      </div>
+                    {/if}
+
+                    <!-- Sleep hypnogram -->
+                    {#if sleepCache[session.csv_path] === "loading"}
+                      <div class="flex items-center gap-2 py-2">
+                        <Spinner size="w-3.5 h-3.5" class="text-muted-foreground/50" />
+                        <span class="text-[0.6rem] text-muted-foreground/50">{t("sleep.title")}...</span>
+                      </div>
+                    {:else if sleepCache[session.csv_path] === "short"}
+                      <div class="flex items-center gap-1.5 py-1">
+                        <span class="text-[0.55rem] text-muted-foreground/40 italic">🌙 {t("sleep.tooShort")}</span>
+                      </div>
+                    {:else if getSleepData(session.csv_path)}
+                      {@const sd = getSleepData(session.csv_path)!}
+                      <div class="flex flex-col gap-1.5">
+                        <span class="text-[0.48rem] font-semibold tracking-widest uppercase text-muted-foreground/50">
+                          {t("sleep.title")}
+                        </span>
+                        <div class="rounded-lg border border-border dark:border-white/[0.06]
+                                    bg-muted/30 dark:bg-white/[0.01] p-2">
+                          <Hypnogram epochs={sd.epochs} summary={sd.summary} />
+                        </div>
+                      </div>
+                    {/if}
+
+                    <!-- CSV info -->
+                    <div class="flex items-center gap-2 rounded-lg border border-border dark:border-white/[0.06]
+                                bg-muted/30 dark:bg-white/[0.01] px-2.5 py-2">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                           stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                           class="w-3 h-3 shrink-0 text-muted-foreground/50">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                      </svg>
+                      <span class="text-[0.58rem] font-mono text-muted-foreground/60 truncate min-w-0 flex-1">
+                        {session.csv_file}
+                      </span>
+                      <span class="text-[0.52rem] text-muted-foreground/40 tabular-nums shrink-0">
+                        {fmtSize(session.file_size_bytes)}
+                      </span>
+                    </div>
+
+                    <!-- Actions -->
+                    <div class="flex items-center gap-2">
+                      {#if confirmDelete === session.csv_path}
+                        <ConfirmAction
+                          message={t("history.confirmDelete")}
+                          confirmLabel={t("history.yesDelete")}
+                          cancelLabel={t("common.cancel")}
+                          onconfirm={() => deleteSession(session.csv_path)}
+                          oncancel={() => { confirmDelete = null; }}
+                        />
+                      {:else}
+                        <Button size="sm" variant="ghost" class="text-[0.62rem] h-6 px-2"
+                                onclick={(e: MouseEvent) => { e.stopPropagation(); invoke("open_label_window_at", { ts: session.session_start_utc ?? 0 }); }}>
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                               stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                               class="w-3 h-3 mr-1">
+                            <path d="M12 5v14M5 12h14"/>
+                          </svg>
+                          {t("history.addLabel")}
+                        </Button>
+                        <Button size="sm" variant="ghost" class="text-[0.62rem] h-6 px-2"
+                                onclick={(e: MouseEvent) => { e.stopPropagation(); invoke("open_session_window", { csvPath: session.csv_path }); }}>
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                               stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                               class="w-3 h-3 mr-1">
+                            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                            <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                          </svg>
+                          {t("history.popOut")}
+                        </Button>
+                        <Button size="sm" variant="ghost"
+                                class="text-[0.62rem] h-6 px-2 text-red-500 hover:text-red-600 hover:bg-red-500/10"
+                                onclick={(e: MouseEvent) => { e.stopPropagation(); confirmDelete = session.csv_path; }}>
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                               stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                               class="w-3 h-3 mr-1">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                            <path d="M10 11v6"/><path d="M14 11v6"/>
+                            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                          </svg>
+                          {t("history.delete")}
+                        </Button>
+                      {/if}
+                    </div>
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          {/if}
+
+        </div><!-- end current-day -->
+      {/if}
+    <!-- Grid tooltip (follows cursor, portal-style - shared by day grid & week dots) -->
+    {#if gridTooltip}
+      <div class="fixed pointer-events-none z-[100]"
+           style="left:{gridTooltip.x + 12}px; top:{gridTooltip.y - 8}px;">
+        <div class="rounded-md bg-popover border border-border dark:border-white/[0.1]
+                    shadow-xl px-2.5 py-1.5 text-popover-foreground min-w-[80px]">
+          <span class="block text-[0.62rem] font-bold tabular-nums">{gridTooltip.time}</span>
+          {#if gridTooltip.values.length > 0}
+            {#each gridTooltip.values as v}
+              <div class="flex items-center gap-1.5 mt-0.5">
+                <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background:{v.color}"></span>
+                <span class="text-[0.5rem] text-muted-foreground/70">{v.label}:</span>
+                <span class="text-[0.5rem] font-medium truncate max-w-[120px]">{v.val}</span>
+              </div>
+            {/each}
+          {:else}
+            <span class="text-[0.48rem] text-muted-foreground/40 italic">no data</span>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
+    <!-- Screenshot preview (shown when hovering a cell with a screenshot) -->
+    {#if screenshotPreview}
+      <div class="fixed pointer-events-none z-[110]"
+           style="left:{screenshotPreview.x + 16}px; top:{screenshotPreview.y + 16}px;">
+        <div class="rounded-lg overflow-hidden border border-border dark:border-white/[0.12]
+                    shadow-2xl bg-popover">
+          <img src={screenshotPreview.src}
+               alt="screenshot preview"
+               class="block max-w-[220px] max-h-[160px] object-contain bg-black/5 dark:bg-white/5" />
+          {#if screenshotPreview.title}
+            <div class="px-2 py-1 border-t border-border/30 dark:border-white/[0.06]">
+              <span class="text-[0.48rem] text-muted-foreground/70 truncate block max-w-[210px]">
+                {screenshotPreview.title}
+              </span>
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
+    <!-- Label dot tooltip (fixed position - avoids overflow clipping) -->
+    {#if labelTooltip}
+      <div class="fixed pointer-events-none z-[120]"
+           style="left:{labelTooltip.x}px; top:{labelTooltip.y - 10}px; transform: translate(-50%, -100%);">
+        <div class="rounded-md bg-popover border border-border dark:border-white/[0.1]
+                    shadow-xl px-2.5 py-1.5 text-popover-foreground whitespace-nowrap max-w-[220px]">
+          <span class="block text-[0.6rem] font-medium leading-tight truncate">{labelTooltip.text}</span>
+          <span class="block text-[0.46rem] text-muted-foreground/60 tabular-nums mt-0.5">
+            {labelTooltip.time}{#if labelTooltip.timeEnd} - {labelTooltip.timeEnd}{/if}
+          </span>
+        </div>
+        <!-- Arrow -->
+        <div class="mx-auto w-0 h-0 border-l-[4px] border-r-[4px] border-t-[4px]
+                    border-l-transparent border-r-transparent border-t-popover"></div>
+      </div>
+    {/if}
+
+  </div><!-- end scroll area -->
+
+  <!-- ── Footer ───────────────────────────────────────────────────────────── -->
+  <div class="px-4 py-2 border-t border-border dark:border-white/[0.07] shrink-0
+              flex items-center justify-between">
+    <span class="text-[0.58rem] text-muted-foreground/50">
+      {t("history.totalSessions", { n: historyStats?.total_sessions ?? sessions.length })}
+    </span>
+    <span class="text-[0.58rem] text-muted-foreground/50 tabular-nums">
+      {fmtSize(sessions.reduce((a, s) => a + s.file_size_bytes, 0))} {t("history.totalSize")}
+    </span>
+  </div>
+  <DisclaimerFooter />
+</div>
+</main>

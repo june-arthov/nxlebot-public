@@ -1,0 +1,25 @@
+# HLint configuration file for test directory
+# https://github.com/ndmitchell/hlint
+
+# A number of extensions are implied by the use of GHC2024.
+- extensions:
+  - default: false
+  # The following list provides an inventory of extensions used over and above
+  # the GHC2024 set. Other extensions can be added, if need be.
+  - name:
+    - NoImplicitPrelude
+    - CPP
+    - DuplicateRecordFields
+    - NoFieldSelectors
+    - OverloadedLists
+    # Provided from GHC 9.2.1 (base-4.16.0.0):
+    - OverloadedRecordDot
+    - OverloadedStrings
+    - QuasiQuotes
+    - Safe
+    - TemplateHaskell
+    - ViewPatterns
+
+# The filepath-1.5.4.0 package, used in testing, fails Hlint in many ways.
+- ignore:
+    path: "tests/integration/tests/mutable-deps/files/filepath-1.5.4.0/*"

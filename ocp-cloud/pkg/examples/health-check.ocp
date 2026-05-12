@@ -1,0 +1,53 @@
+# health-check.ocp — Multi-Endpoint Health Monitor
+# Usage: set endpoints and webhook URL, then run
+
+set BASE_URL = "https://api.example.com"
+set ALERT_WEBHOOK = "https://hooks.slack.com/services/xxx/yyy/zzz"
+set ALL_OK = 1
+
+echo "========================================="
+echo "Health Check — $(date)"
+echo "========================================="
+
+echo "[v1 API] Checking..."
+try {
+    run "curl -sf -o /dev/null -w '%{http_code}' $BASE_URL/v1/health"
+    echo "v1 API: ✅ OK"
+} catch {
+    echo "v1 API: ❌ DOWN"
+    set ALL_OK = 0
+}
+
+echo "[v2 API] Checking..."
+try {
+    run "curl -sf -o /dev/null -w '%{http_code}' $BASE_URL/v2/health"
+    echo "v2 API: ✅ OK"
+} catch {
+    echo "v2 API: ❌ DOWN"
+    set ALL_OK = 0
+}
+
+echo "[Admin Panel] Checking..."
+try {
+    run "curl -sf -o /dev/null -w '%{http_code}' $BASE_URL/admin/health"
+    echo "Admin: ✅ OK"
+} catch {
+    echo "Admin: ❌ DOWN"
+    set ALL_OK = 0
+}
+
+echo "[Database] Checking..."
+try {
+    run "curl -sf -o /dev/null -w '%{http_code}' $BASE_URL/db-health"
+    echo "Database: ✅ OK"
+} catch {
+    echo "Database: ❌ DOWN"
+    set ALL_OK = 0
+}
+
+if $ALL_OK == 1 {
+    echo "All systems operational ✅"
+} else {
+    echo "Some systems are DOWN — sending alert..."
+    run "curl -X POST $ALERT_WEBHOOK -H 'Content-Type: application/json' -d '{\"text\":\"⚠️ Health check FAILED — check dashboard\"}'"
+}

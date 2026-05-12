@@ -1,0 +1,72 @@
+.community {
+    min-height: 280px;
+
+    background-size: cover;
+
+    margin: $grid-gutter-width 0;
+
+    h2,
+    a {
+        color: #fff;
+    }
+
+    a:hover {
+        color: #fff;
+    }
+}
+
+.pattern-bg {
+    background: url("/static/img/pattern.png");
+    background-size: cover;
+    color: #fff;
+
+    padding: $grid-gutter-width/2 0 $grid-gutter-width;
+
+    box-shadow: 0 0 4em rgba(0,0,0,0.25) inset;
+
+    a {
+        color: #db83ed;
+
+        &:hover {
+            color: #b663b1;
+        }
+    }
+
+    code {
+        color: #fff;
+        background-color: rgba(235, 228, 243, 0.25);
+    }
+}
+
+.sponsors p {
+    font-size: 95%;
+    line-height: 130%;
+}
+
+.features {
+    .col-md-6 {
+        cursor: pointer;
+    }
+
+    .collapse {
+        border-bottom: 1px solid rgba(0,0,0,0.2);
+        padding: 0 0 1.5em;
+        cursor: default;
+    }
+}
+
+.videos {
+    a:hover {
+        text-decoration: none;
+    }
+
+    .thumbnail:hover {
+        a {
+            text-decoration: none;
+
+            &:hover {
+                text-decoration: none;
+            }
+        }
+    }
+}

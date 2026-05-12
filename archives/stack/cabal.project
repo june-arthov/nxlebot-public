@@ -1,0 +1,40 @@
+-- This file is a configuration file for Cabal (the tool). It is provided to
+-- assist some users of that tool to develop Stack. For information about
+-- `cabal.project` files, see:
+-- https://cabal.readthedocs.io/en/stable/cabal-project.html.
+--
+-- For information about possible limitations of the `cabal.config` files
+-- corresponding to Stackage package sets that are made available by Stackage
+-- see: https://github.com/fpco/stackage-server/issues/232.
+--
+-- `import:` is only available to users of Cabal (the tool) >= 3.8.1.0.
+--
+-- The constraints in file `cabal.config` can be obtained by commanding:
+--
+-- > stack ls dependencies cabal > cabal.config
+--
+-- However, be aware that, in respect of the `unix` package or the `Win32`
+-- package (that may come with GHC, depending on the operating system):
+--
+-- * on Windows, the Stack project does not depend on `unix` but depends on
+--   `Win32`; and
+--
+-- * on non-Windows operating systems, the Stack project does not depend on
+--   `Win32` but depends on `unix`.
+--
+-- The command above will add one of the two packages to `cabal.config` but omit
+-- the other. A comprehensive `cabal.config` will need to be created by editing
+-- the command's output.
+--
+-- Also be aware that there may be other packages required only on non-Windows
+-- systems. For example, the `hinotify` package.
+--
+-- Be sure to set `with-compiler: ghc-x.y.z` below to the version of GHC that is
+-- specified by the snapshot specifed in Stack's project-level YAML
+-- configuration file (`stack.yaml`). The relevant version of GHC can be
+-- confirmed by reviewing the snapshot on Stackage. For example, at:
+-- https://www.stackage.org/lts-24.24/cabal.config.
+--
+with-compiler: ghc-9.10.3
+import: cabal.config
+packages: .

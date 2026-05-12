@@ -1,0 +1,35 @@
+{
+    "name": "SpatialSys.UnitySDK.Editor",
+    "rootNamespace": "SpatialSys.UnitySDK.Editor",
+    "references": [
+        "SpatialSys.UnitySDK",
+        "Unity.ScriptableBuildPipeline",
+        "Unity.ScriptableBuildPipeline.Editor",
+        "CSharpPromise",
+        "EditorRestClient",
+        "CsvLib",
+        "Unity.Addressables.Editor",
+        "Unity.RenderPipelines.Core.Runtime",
+        "Unity.RenderPipelines.Universal.Runtime",
+        "Unity.VisualScripting.Flow",
+        "Unity.VisualScripting.Flow.Editor",
+        "Unity.VisualScripting.Core.Editor",
+        "Unity.VisualScripting.Core",
+        "Unity.EditorCoroutines.Editor",
+        "Unity.TextMeshPro",
+        "SpatialSys.UnitySDK.VisualScripting",
+        "Unity.AI.Navigation",
+        "Unity.RenderPipelines.Core.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

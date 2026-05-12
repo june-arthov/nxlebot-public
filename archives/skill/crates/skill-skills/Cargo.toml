@@ -1,0 +1,26 @@
+[package]
+name = "skill-skills"
+version = "0.0.1"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Skill markdown discovery, parsing, and prompt injection for NeuroSkill LLM chat"
+
+[dependencies]
+anyhow = { workspace = true }
+skill-constants = { path = "../skill-constants" }
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+dirs        = "6"
+ignore      = "0.4"
+
+# Optional: skills auto-update from GitHub
+ureq        = { version = "3", features = ["native-tls"], optional = true }
+flate2      = { version = "1", optional = true }
+tar         = { version = "0.4", optional = true }
+
+[features]
+default = []
+sync    = ["ureq", "flate2", "tar"]
+
+[lints]
+workspace = true

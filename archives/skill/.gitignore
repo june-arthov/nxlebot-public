@@ -1,0 +1,34 @@
+.DS_Store
+node_modules
+/build
+/.svelte-kit
+/package
+.env
+.env.*
+!.env.example
+!.envrc
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# Updater signing keys — NEVER commit these
+src-tauri/keys/updater.key
+src-tauri/keys/updater.pub
+src-tauri/keys/.env.keys
+
+# do not include weights
+**/*.gguf
+**/*.safetensors
+
+# Rust build artifacts (main crate + workspace crates)
+**/target/
+
+rust_out
+TODO.md
+AGENTS.md
+# docs/screenshots/gifs/*.gif
+
+.gitrub_activity
+# Rust lock files — Cargo.lock is committed (application, not library)
+test-results/
+.llama-prebuilt/
+src-tauri/binaries/

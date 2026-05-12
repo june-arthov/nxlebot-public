@@ -1,0 +1,41 @@
+﻿import {
+  ProForm,
+  ProFormUploadButton,
+  ProFormUploadDragger,
+} from '@ant-design/pro-components';
+
+const Demo = () => {
+  return (
+    <ProForm name="field-set-upload-demo">
+      <ProFormUploadButton
+        title="上传按钮的文本变啦"
+        name="upload"
+        label="Upload"
+        max={2}
+        fieldProps={{
+          name: 'file',
+        }}
+        action="/upload.do"
+        extra="extra"
+      />
+      <ProFormUploadButton
+        name="upload"
+        label="Upload"
+        max={2}
+        fieldProps={{
+          name: 'file',
+          listType: 'picture-card',
+        }}
+        action="/upload.do"
+        extra="extra"
+      />
+      <ProFormUploadDragger max={4} label="Dragger" name="dragger" />
+    </ProForm>
+  );
+};
+
+export default () => (
+  <div style={{ padding: 24 }}>
+    <Demo />
+  </div>
+);

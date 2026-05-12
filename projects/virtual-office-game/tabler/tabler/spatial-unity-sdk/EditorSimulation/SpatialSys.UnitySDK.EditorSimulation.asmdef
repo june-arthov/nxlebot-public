@@ -1,0 +1,25 @@
+{
+    "name": "SpatialSys.UnitySDK.EditorSimulation",
+    "rootNamespace": "SpatialSys.UnitySDK.EditorSimulation",
+    "references": [
+        "SpatialSys.UnitySDK",
+        "SpatialSys.UnitySDK.Editor",
+        "Unity.VisualScripting.Core",
+        "Unity.RenderPipelines.Universal.Runtime",
+        "SimpleJSONSim",
+        "SpatialSys.UnitySDK.VisualScripting"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "!DISABLE_SPATIAL_UNITYSDK_EDITOR_SIMULATION"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

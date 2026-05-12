@@ -1,0 +1,42 @@
+# data-sync.ocp — Parallel Multi-Source Data Sync
+# Usage: demonstrates parallel blocks + data pipeline
+
+set API_A = "https://api.crm.example.com"
+set API_B = "https://api.billing.example.com"
+set API_TOKEN = "bearer-token-here"
+set OUTPUT_DIR = "/tmp/sync-output"
+
+run "mkdir -p $OUTPUT_DIR"
+
+echo "=== Starting data sync ==="
+
+# Fetch from multiple sources in parallel
+parallel {
+    echo "[CRM] Fetching contacts..."
+    run "curl -sf -H 'Authorization: $API_TOKEN' $API_A/contacts > $OUTPUT_DIR/crm-contacts.json"
+    echo "[CRM] Done — $(wc -l < $OUTPUT_DIR/crm-contacts.json) records"
+} {
+    echo "[Billing] Fetching invoices..."
+    run "curl -sf -H 'Authorization: $API_TOKEN' $API_B/invoices > $OUTPUT_DIR/billing-invoices.json"
+    echo "[Billing] Done — $(wc -l < $OUTPUT_DIR/billing-invoices.json) records"
+} {
+    echo "[Billing] Fetching subscriptions..."
+    run "curl -sf -H 'Authorization: $API_TOKEN' $API_B/subscriptions > $OUTPUT_DIR/billing-subscriptions.json"
+    echo "[Billing] Done — $(wc -l < $OUTPUT_DIR/billing-subscriptions.json) records"
+}
+
+echo "=== Merging data ==="
+run "python3 merge-data.py --input $OUTPUT_DIR --output $OUTPUT_DIR/merged.csv"
+
+echo "=== Uploading to warehouse ==="
+try {
+    run "aws s3 cp $OUTPUT_DIR/merged.csv s3://data-warehouse/sync/merged-$(date +%Y%m%d).csv"
+    echo "Upload complete ✅"
+} catch {
+    echo "Upload failed ❌ — keeping local copy at $OUTPUT_DIR/merged.csv"
+}
+
+echo "=== Cleanup ==="
+run "rm -rf $OUTPUT_DIR"
+
+echo "Sync complete! 🎉"

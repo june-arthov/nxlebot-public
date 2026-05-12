@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenClaw Project Dashboard</title>
+    <style>
+        :root {
+            --primary: #6366f1;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --info: #3b82f6;
+            --light: #f8fafc;
+            --dark: #1e293b;
+            --border: #e2e8f0;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--light);
+            color: var(--dark);
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        
+        header {
+            background: linear-gradient(135deg, var(--primary), #8b5cf6);
+            color: white;
+            padding: 3rem 2rem;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .subtitle {
+            opacity: 0.9;
+            font-size: 1.1rem;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        
+        .stat-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 12px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border: 1px solid var(--border);
+        }
+        
+        .stat-card h3 {
+            color: #64748b;
+            font-size: 0.9rem;
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .stat-card .value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--dark);
+        }
+        
+        .status-completed { color: var(--success); }
+        .status-active { color: var(--info); }
+        .status-postponed { color: var(--warning); }
+        .status-archived { color: #64748b; }
+        
+        .projects-table {
+            width: 100%;
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border: 1px solid var(--border);
+        }
+        
+        .projects-table table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .projects-table th {
+            background: #f1f5f9;
+            padding: 1rem;
+            text-align: left;
+            font-weight: 600;
+            color: #475569;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .projects-table td {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .projects-table tr:hover {
+            background: #f8fafc;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 0.4rem 0.8rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: capitalize;
+        }
+        
+        .badge-completed { background: #d1fae5; color: #065f46; }
+        .badge-active { background: #dbeafe; color: #1e40af; }
+        .badge-postponed { background: #fed7aa; color: #7c2d12; }
+        .badge-archived { background: #e2e8f0; color: #475569; }
+        
+        .progress-bar {
+            height: 6px;
+            background: #e2e8f0;
+            border-radius: 3px;
+            overflow: hidden;
+            margin: 0.5rem 0;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: var(--primary);
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+        
+        .priority-high { color: var(--danger); }
+        .priority-medium { color: var(--warning); }
+        .priority-low { color: var(--success); }
+        
+        footer {
+            margin-top: 3rem;
+            padding-top: 2rem;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            color: #64748b;
+            font-size: 0.9rem;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            
+            h1 {
+                font-size: 1.8rem;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .projects-table {
+                overflow-x: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📋 OpenClaw Project Dashboard</h1>
+            <p class="subtitle">Real-time project tracking and management</p>
+        </header>
+        
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>Total Projects</h3>
+                <div class="value" id="total-projects">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Completed</h3>
+                <div class="value status-completed" id="completed-projects">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Active</h3>
+                <div class="value status-active" id="active-projects">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Postponed</h3>
+                <div class="value status-postponed" id="postponed-projects">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Archived</h3>
+                <div class="value status-archived" id="archived-projects">-</div>
+            </div>
+            <div class="stat-card">
+                <h3>Avg Progress</h3>
+                <div class="value" id="avg-progress">-</div>
+            </div>
+        </div>
+        
+        <div class="projects-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Project</th>
+                        <th>Status</th>
+                        <th>Progress</th>
+                        <th>Priority</th>
+                        <th>Last Updated</th>
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody id="projects-list">
+                    <tr>
+                        <td colspan="6" style="text-align: center; padding: 2rem; color: #64748b;">
+                            Loading projects...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <footer>
+            <p>Project Dashboard | Last Updated: <span id="last-updated">-</span> | 
+            <a href="PROJECTS.md" style="color: var(--primary);">View Markdown</a> | 
+            <a href="project-status.json" style="color: var(--primary);">View JSON</a></p>
+        </footer>
+    </div>
+    
+    <script>
+        // Load project data
+        async function loadProjects() {
+            try {
+                const response = await fetch('project-status.json');
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('Error loading projects:', error);
+                return null;
+            }
+        }
+        
+        // Update stats
+        function updateStats(stats) {
+            document.getElementById('total-projects').textContent = stats.totalProjects;
+            document.getElementById('completed-projects').textContent = stats.completed;
+            document.getElementById('active-projects').textContent = stats.active;
+            document.getElementById('postponed-projects').textContent = stats.postponed;
+            document.getElementById('archived-projects').textContent = stats.archived;
+            document.getElementById('avg-progress').textContent = stats.averageProgress + '%';
+            document.getElementById('last-updated').textContent = stats.lastUpdated || 'Unknown';
+        }
+        
+        // Create status badge
+        function createStatusBadge(status) {
+            const badgeClasses = {
+                completed: 'badge-completed',
+                active: 'badge-active',
+                postponed: 'badge-postponed',
+                archived: 'badge-archived'
+            };
+            
+            const className = badgeClasses[status] || 'badge-archived';
+            return `<span class="status-badge ${className}">${status}</span>`;
+        }
+        
+        // Create priority indicator
+        function createPriorityIndicator(priority) {
+            const priorityClasses = {
+                high: 'priority-high',
+                medium: 'priority-medium',
+                low: 'priority-low'
+            };
+            
+            const className = priorityClasses[priority] || 'priority-medium';
+            return `<span class="priority-indicator ${className}">● ${priority}</span>`;
+        }
+        
+        // Update projects list
+        function updateProjectsList(projects) {
+            const tbody = document.getElementById('projects-list');
+            tbody.innerHTML = '';
+            
+            Object.values(projects).forEach(project => {
+                const row = document.createElement('tr');
+                
+                row.innerHTML = `
+                    <td><strong>${project.name}</strong><br>
+                        <small>${project.id}</small></td>
+                    <td>${createStatusBadge(project.status)}</td>
+                    <td>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: ${project.progress}%"></div>
+                        </div>
+                        ${project.progress}%
+                    </td>
+                    <td>${createPriorityIndicator(project.priority)}</td>
+                    <td>${project.lastUpdated || 'N/A'}</td>
+                    <td>${project.notes || '-'}</td>
+                `;
+                
+                tbody.appendChild(row);
+            });
+        }
+        
+        // Initialize dashboard
+        async function init() {
+            const data = await loadProjects();
+            
+            if (data) {
+                updateStats(data.stats);
+                updateProjectsList(data.projects);
+            } else {
+                document.getElementById('projects-list').innerHTML = `
+                    <tr>
+                        <td colspan="6" style="text-align: center; padding: 2rem; color: #ef4444;">
+                            ⚠️ Error loading project data
+                        </td>
+                    </tr>
+                `;
+            }
+        }
+        
+        // Load dashboard
+        init();
+    </script>
+</body>
+</html>

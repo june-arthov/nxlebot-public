@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clear Cafe — Mindful Vegan Dining</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            /* Clear Cafe Brand Colors */
+            --sage: #7B9E6B;
+            --sage-light: #A8C49A;
+            --sage-dark: #5A7A4A;
+            --lavender: #9B7CB6;
+            --lavender-light: #B8A0D1;
+            --lavender-dark: #7A5A94;
+            
+            /* Calm Palette */
+            --cream: #FAF8F5;
+            --cream-dark: #F5F1EB;
+            --warm-white: #FEFDFB;
+            --charcoal: #3D3D3D;
+            --stone: #6B6B6B;
+            --light-stone: #9A9A9A;
+            
+            /* Typography */
+            --font-serif: 'Cormorant Garamond', Georgia, serif;
+            --font-sans: 'Inter', -apple-system, sans-serif;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+            font-size: 16px;
+        }
+
+        body {
+            font-family: var(--font-sans);
+            background: var(--cream);
+            color: var(--charcoal);
+            line-height: 1.7;
+            font-weight: 300;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Selection */
+        ::selection {
+            background: var(--sage-light);
+            color: white;
+        }
+
+        /* Navigation - Minimal */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            padding: 2rem 4rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(250, 248, 245, 0.92);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            z-index: 1000;
+            transition: all 0.4s ease;
+        }
+
+        nav.scrolled {
+            padding: 1.25rem 4rem;
+            background: rgba(250, 248, 245, 0.98);
+            box-shadow: 0 1px 0 rgba(0,0,0,0.05);
+        }
+
+        .logo {
+            font-family: var(--font-serif);
+            font-size: 1.5rem;
+            font-weight: 400;
+            letter-spacing: 0.2em;
+            color: var(--charcoal);
+            text-decoration: none;
+        }
+
+        .logo span {
+            font-style: italic;
+            color: var(--sage-dark);
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 3rem;
+            list-style: none;
+        }
+
+        .nav-links a {
+            font-size: 0.75rem;
+            font-weight: 400;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            color: var(--stone);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+
+        .nav-links a:hover {
+            color: var(--sage-dark);
+        }
+
+        /* Hero - Calm & Spacious */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 8rem 4rem 4rem;
+            background: linear-gradient(180deg, var(--cream) 0%, var(--warm-white) 100%);
+            position: relative;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--sage-light), transparent);
+            opacity: 0.5;
+        }
+
+        .hero-content {
+            text-align: center;
+            max-width: 800px;
+        }
+
+        .hero-tag {
+            font-size: 0.7rem;
+            font-weight: 400;
+            text-transform: uppercase;
+            letter-spacing: 0.3em;
+            color: var(--sage);
+            margin-bottom: 2rem;
+        }
+
+        .hero h1 {
+            font-family: var(--font-serif);
+            font-size: clamp(2.5rem, 5vw, 4rem);
+            font-weight: 300;
+            line-height: 1.2;
+            margin-bottom: 1.5rem;
+            color: var(--charcoal);
+        }
+
+        .hero h1 em {
+            font-style: italic;
+            color: var(--sage-dark);
+        }
+
+        .hero-desc {
+            font-size: 1.1rem;
+            color: var(--stone);
+            max-width: 550px;
+            margin: 0 auto 3rem;
+            line-height: 1.8;
+        }
+
+        .hero-cta {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 1rem 2.5rem;
+            background: var(--sage);
+            color: white;
+            font-size: 0.7rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+            text-decoration: none;
+            border-radius: 100px;
+            transition: all 0.3s ease;
+        }
+
+        .hero-cta:hover {
+            background: var(--sage-dark);
+            transform: translateY(-2px);
+        }
+
+        /* Philosophy Section */
+        .philosophy {
+            padding: 8rem 4rem;
+            background: var(--warm-white);
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 5rem;
+        }
+
+        .section-label {
+            font-size: 0.7rem;
+            font-weight: 400;
+            text-transform: uppercase;
+            letter-spacing: 0.3em;
+            color: var(--sage);
+            margin-bottom: 1rem;
+        }
+
+        .section-title {
+            font-family: var(--font-serif);
+            font-size: 2.5rem;
+            font-weight: 300;
+            color: var(--charcoal);
+        }
+
+        .philosophy-text {
+            font-family: var(--font-serif);
+            font-size: 1.35rem;
+            font-weight: 300;
+            font-style: italic;
+            text-align: center;
+            color: var(--stone);
+            max-width: 700px;
+            margin: 0 auto 5rem;
+            line-height: 1.8;
+        }
+
+        .philosophy-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 4rem;
+            text-align: center;
+        }
+
+        .philosophy-item h3 {
+            font-family: var(--font-serif);
+            font-size: 1.25rem;
+            font-weight: 400;
+            margin-bottom: 1rem;
+            color: var(--charcoal);
+        }
+
+        .philosophy-item p {
+            font-size: 0.9rem;
+            color: var(--stone);
+            line-height: 1.7;
+        }
+
+        /* Menu Section - Clean & Organized */
+        .menu-section {
+            padding: 8rem 4rem;
+            background: var(--cream);
+        }
+
+        .menu-nav {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin-bottom: 4rem;
+            flex-wrap: wrap;
+        }
+
+        .menu-nav-btn {
+            padding: 0.75rem 1.5rem;
+            background: transparent;
+            border: none;
+            font-family: var(--font-sans);
+            font-size: 0.75rem;
+            font-weight: 400;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            color: var(--light-stone);
+            cursor: pointer;
+            transition: all 0.3s;
+            border-bottom: 1px solid transparent;
+        }
+
+        .menu-nav-btn:hover,
+        .menu-nav-btn.active {
+            color: var(--sage-dark);
+            border-bottom-color: var(--sage);
+        }
+
+        .menu-category {
+            margin-bottom: 4rem;
+        }
+
+        .menu-category-title {
+            font-family: var(--font-serif);
+            font-size: 1.5rem;
+            font-weight: 400;
+            font-style: italic;
+            color: var(--sage-dark);
+            margin-bottom: 2rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid rgba(123, 158, 107, 0.2);
+        }
+
+        .menu-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 2.5rem 4rem;
+        }
+
+        .menu-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid rgba(0,0,0,0.05);
+        }
+
+        .menu-item-info h4 {
+            font-family: var(--font-serif);
+            font-size: 1.1rem;
+            font-weight: 400;
+            margin-bottom: 0.35rem;
+            color: var(--charcoal);
+        }
+
+        .menu-item-info p {
+            font-size: 0.85rem;
+            color: var(--light-stone);
+            font-style: italic;
+        }
+
+        .menu-item-price {
+            font-family: var(--font-serif);
+            font-size: 1rem;
+            font-weight: 400;
+            color: var(--sage-dark);
+            white-space: nowrap;
+        }
+
+        .menu-tags {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .menu-tag {
+            font-size: 0.65rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--lavender);
+        }
+
+        /* Locations */
+        .locations {
+            padding: 8rem 4rem;
+            background: var(--warm-white);
+        }
+
+        .locations-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 4rem;
+            margin-top: 4rem;
+        }
+
+        .location-card {
+            text-align: center;
+            padding: 3rem;
+            background: var(--cream);
+            border-radius: 4px;
+        }
+
+        .location-card h3 {
+            font-family: var(--font-serif);
+            font-size: 1.75rem;
+            font-weight: 400;
+            margin-bottom: 1rem;
+            color: var(--charcoal);
+        }
+
+        .location-card address {
+            font-style: normal;
+            font-size: 0.9rem;
+            color: var(--stone);
+            line-height: 1.8;
+            margin-bottom: 1.5rem;
+        }
+
+        .location-hours {
+            font-size: 0.8rem;
+            color: var(--sage-dark);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        /* Footer */
+        footer {
+            padding: 4rem;
+            background: var(--charcoal);
+            text-align: center;
+        }
+
+        .footer-logo {
+            font-family: var(--font-serif);
+            font-size: 1.5rem;
+            font-weight: 400;
+            letter-spacing: 0.2em;
+            color: var(--cream);
+            margin-bottom: 1rem;
+        }
+
+        .footer-tagline {
+            font-size: 0.85rem;
+            color: rgba(250, 248, 245, 0.6);
+            font-style: italic;
+            margin-bottom: 2rem;
+        }
+
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .footer-links a {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            color: rgba(250, 248, 245, 0.5);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+
+        .footer-links a:hover {
+            color: var(--cream);
+        }
+
+        .copyright {
+            font-size: 0.75rem;
+            color: rgba(250, 248, 245, 0.3);
+        }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            nav { padding: 1.5rem 2rem; }
+            .nav-links { display: none; }
+            .hero { padding: 6rem 2rem 3rem; }
+            .philosophy { padding: 5rem 2rem; }
+            .philosophy-grid { grid-template-columns: 1fr; gap: 2.5rem; }
+            .menu-section { padding: 5rem 2rem; }
+            .menu-grid { grid-template-columns: 1fr; }
+            .locations { padding: 5rem 2rem; }
+            .locations-grid { grid-template-columns: 1fr; gap: 2rem; }
+        }
+    </style>
+</head>
+<body>
+    <nav id="navbar">
+        <a href="#" class="logo">CLEAR<span>CAFE</span></a>
+        <ul class="nav-links">
+            <li><a href="#philosophy">Philosophy</a></li>
+            <li><a href="#menu">Menu</a></li>
+            <li><a href="#locations">Locations</a></li>
+            <li><a href="#contact">Contact</a></li>
+        </ul>
+    </nav>
+
+    <section class="hero">
+        <div class="hero-content">
+            <p class="hero-tag">Organic • Vegan • Bali</p>
+            <h1>Mindful Dining,<br><em>Naturally</em></h1>
+            <p class="hero-desc">A sanctuary where plant-based cuisine meets conscious living. Every dish celebrates the abundance of nature, crafted with intention and served with grace.</p>
+            <a href="#menu" class="hero-cta">Explore Menu</a>
+        </div>
+    </section>
+
+    <section class="philosophy" id="philosophy">
+        <div class="container">
+            <div class="section-header">
+                <p class="section-label">Our Philosophy</p>
+                <h2 class="section-title">Eat with Intention</h2>
+            </div>
+            <p class="philosophy-text">"We believe that food is medicine, and the earth provides everything we need to nourish our bodies and souls. Our commitment is to serve only the purest, most vibrant plant-based cuisine."</p>
+            <div class="philosophy-grid">
+                <div class="philosophy-item">
+                    <h3>100% Plant-Based</h3>
+                    <p>Every ingredient is vegan, organic, and sourced from local farms committed to sustainable practices.</p>
+                </div>
+                <div class="philosophy-item">
+                    <h3>Zero Waste</h3>
+                    <p>From compostable packaging to our no-waste kitchen, we honor the earth with every decision.</p>
+                </div>
+                <div class="philosophy-item">
+                    <h3>Conscious Cooking</h3>
+                    <p>Our chefs prepare each meal with mindfulness, ensuring every bite supports your wellbeing.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="menu-section" id="menu">
+        <div class="container">
+            <div class="section-header">
+                <p class="section-label">Culinary Offerings</p>
+                <h2 class="section-title">The Menu</h2>
+            </div>
+            
+            <div class="menu-nav">
+                <button class="menu-nav-btn active">Drinks</button>
+                <button class="menu-nav-btn">Breakfast</button>
+                <button class="menu-nav-btn">Lunch & Dinner</button>
+                <button class="menu-nav-btn">Desserts</button>
+            </div>
+
+            <!-- Drinks Section -->
+            <div class="menu-category">
+                <h3 class="menu-category-title">Elixirs & Tonics</h3>
+                <div class="menu-grid">
+                    <div class="menu-item">
+                        <div class="menu-item-info">
+                            <h4>Jamu</h4>
+                            <p>Ancient Balinese ayurvedic healer with tamarind, ginger, turmeric</p>
+                            <div class="menu-tags">
+                                <span class="menu-tag">Healing</span>
+                                <span class="menu-tag">NF</span>
+                            </div>
+                        </div>
+                        <span class="menu-item-price">30K</span>
+                    </div>
+                    <div class="menu-item">
+                        <div class="menu-item-info">
+                            <h4>Golden Latte</h4>
+                            <p>Fresh turmeric, ginger, cinnamon, coconut milk, raw honey</p>
+                            <div class="menu-tags">
+                                <span class="menu-tag">Immunity</span>
+                            </div>
+                        </div>
+                        <span class="menu-item-price">45K</span>
+                    </div>
+                    <div class="menu-item">
+                        <div class="menu-item-info">
+                            <h4>Matcha Ceremonial</h4>
+                            <p>Premium Uji matcha, whisked to order</p>
+                            <div class="menu-tags">
+                                <span class="menu-tag">Focus</span>
+                            </div>
+                        </div>
+                        <span class="menu-item-price">50K</span>
+                    </div>
+                    <div class="menu-item">
+                        <div class="menu-item-info">
+                            <h4>Diamond Detox</h4>
+                            <p>Local aloe, mint, ginger, apple, turmeric, honey & sea salt</p>
+                            <div class="menu-tags">
+                                <span class="menu-tag">Detox</span>
+                                <span class="menu-tag">NF</span>
+                            </div>
+                        </div>
+                        <span class="menu-item-price">40K</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="menu-category">
+                <h3 class="menu-category-title">Fresh Juices</h3>
+                <div class="menu-grid">
+                    <div class="menu-item">
+                        <div class="menu-item-info">
+                            <h4>Green Clean</h4>
+                            <p>Green papaya, turmeric, ginger, spinach, apple & lime</p>
+                            <div class="menu-tags">
+                                <span class="menu-tag">Energy</span>
+                                <span class="menu-tag">NF</span>
+                            </div>
+                        </div>
+                        <span class="menu-item-price">45K</span>
+                    </div>
+                    <div class="menu-item">
+                        <div class="menu-item-info">
+                            <h4>Cool Rain</h4>
+                            <p>100% watermelon juice with hint of sea salt</p>
+                            <div class="menu-tags">
+                                <span class="menu-tag">Hydrating</span>
+                                <span class="menu-tag">NF</span>
+                            </div>
+                        </div>
+                        <span class="menu-item-price">35K</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Breakfast Preview -->
+            <div class="menu-category">
+                <h3 class="menu-category-title">Morning Nourishment</h3>
+                <div class="menu-grid">
+                    <div class="menu-item">
+                        <div class="menu-item-info">
+                            <h4>Clear Green Bowl</h4>
+                            <p>Quinoa, avocado, kale, edamame, cucumber, house-made tahini</p>
+                            <div class="menu-tags">
+                                <span class="menu-tag">Vegan</span>
+                                <span class="menu-tag">GF</span>
+                            </div>
+                        </div>
+                        <span class="menu-item-price">85K</span>
+                    </div>
+                    <div class="menu-item">
+                        <div class="menu-item-info">
+                            <h4>Dragon Flight Smoothie Bowl</h4>
+                            <p>Dragon fruit, mango, banana with coconut mylk, topped with homemade granola</p>
+                            <div class="menu-tags">
+                                <span class="menu-tag">Raw</span>
+                                <span class="menu-tag">GF</span>
+                            </div>
+                        </div>
+                        <span class="menu-item-price">65K</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="locations" id="locations">
+        <div class="container">
+            <div class="section-header">
+                <p class="section-label">Visit Us</p>
+                <h2 class="section-title">Our Sanctuaries</h2>
+            </div>
+            <div class="locations-grid">
+                <div class="location-card">
+                    <h3>Ubud</h3>
+                    <address>
+                        Jl. Hanoman No. 35<br>
+                        Ubud, Bali 80571<br>
+                        +62 878 6219 7585
+                    </address>
+                    <p class="location-hours">Daily 7AM — 10PM</p>
+                </div>
+                <div class="location-card">
+                    <h3>Canggu</h3>
+                    <address>
+                        Jl. Pantai Batu Bolong No. 89<br>
+                        Canggu, Bali 80361<br>
+                        +62 812 3456 7890
+                    </address>
+                    <p class="location-hours">Daily 8AM — 11PM</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer id="contact">
+        <div class="footer-logo">CLEARCAFE</div>
+        <p class="footer-tagline">Mindful dining for conscious souls</p>
+        <div class="footer-links">
+            <a href="#">Instagram</a>
+            <a href="#">Reservations</a>
+            <a href="#">Contact</a>
+        </div>
+        <p class="copyright">© 2026 Clear Cafe Bali. All rights reserved.</p>
+    </footer>
+
+    <script>
+        // Navbar scroll
+        window.addEventListener('scroll', () => {
+            const nav = document.getElementById('navbar');
+            nav.classList.toggle('scrolled', window.scrollY > 50);
+        });
+
+        // Menu tabs
+        document.querySelectorAll('.menu-nav-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.menu-nav-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+            });
+        });
+    </script>
+</body>
+</html>

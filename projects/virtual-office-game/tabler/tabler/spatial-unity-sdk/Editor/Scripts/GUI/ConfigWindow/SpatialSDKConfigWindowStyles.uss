@@ -1,0 +1,197 @@
+:root {
+    flex-direction: column;
+    min-width: auto;
+    min-height: auto;
+    padding-left: 20px;
+    padding-right: 20px;
+    height: auto;
+    width: auto;
+    flex-grow: 1;
+}
+
+.tabButton {
+    background-color: rgba(255, 255, 255, 0);
+    border-left-width: 0;
+    border-right-width: 0;
+    border-top-width: 0;
+    border-bottom-width: 0;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    width: auto;
+    height: auto;
+    color: rgb(128, 128, 128);
+    -unity-font-style: bold;
+    font-size: 18px;
+    padding-left: 0;
+    padding-right: 0;
+    margin-right: 5px;
+    margin-left: 5px;
+    margin-top: 0;
+    margin-bottom: 0;
+    min-width: auto;
+    transition-property: translate;
+    transition-duration: 0.2s;
+    transition-timing-function: ease-out-back;
+    flex-shrink: 0;
+    padding-top: 4px;
+}
+
+.tabButton:hover:enabled {
+    transition-property: translate;
+    transition-duration: 0.2s;
+    transition-timing-function: ease-out-back;
+    scale: 1 1;
+    translate: 0 2px;
+}
+
+.tabButtonSelected {
+    background-color: rgba(0, 0, 0, 0);
+    color: rgb(255, 255, 255);
+    -unity-font-style: bold;
+    border-top-width: 0;
+    border-left-color: rgb(255, 255, 255);
+    border-right-color: rgb(255, 255, 255);
+    border-top-color: rgb(255, 255, 255);
+    border-bottom-color: rgb(255, 255, 255);
+}
+
+.block_base {
+    padding-left: 12px;
+    padding-right: 12px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+    border-top-left-radius: 16px;
+    border-bottom-left-radius: 16px;
+    border-top-right-radius: 16px;
+    border-bottom-right-radius: 16px;
+    background-color: rgba(255, 255, 255, 0.1);
+    flex-grow: 1;
+    flex-shrink: 1;
+    width: 100%;
+    color: rgb(255, 255, 255);
+    margin-bottom: 8px;
+}
+
+.block_red {
+    background-color: rgba(255, 0, 0, 0.1);
+    color: rgb(255, 67, 67);
+}
+
+.block_green {
+    background-color: rgba(0, 255, 0, 0.1);
+    color: rgb(128, 255, 128);
+}
+
+.block_yellow {
+    background-color: rgba(255, 234, 128, 0.1);
+    color: rgb(255, 234, 128);
+}
+
+.block_blue {
+    background-color: rgba(33, 156, 235, 0.1);
+    color: rgb(33, 156, 235);
+}
+
+.blockButton {
+    flex-shrink: 1;
+    background-color: rgb(255, 255, 255);
+    border-left-color: rgba(255, 255, 255, 0);
+    border-right-color: rgba(255, 255, 255, 0);
+    border-top-color: rgba(255, 255, 255, 0);
+    border-bottom-color: rgba(255, 255, 255, 0);
+    border-left-width: 0;
+    border-right-width: 0;
+    border-top-width: 0;
+    border-bottom-width: 0;
+    border-top-left-radius: 10px;
+    border-bottom-left-radius: 10px;
+    border-top-right-radius: 10px;
+    border-bottom-right-radius: 10px;
+    color: rgb(0, 0, 0);
+    -unity-font-style: bold;
+    font-size: 16px;
+    max-width: none;
+    flex-grow: 0;
+    flex-direction: column;
+    min-width: 0;
+    margin-left: 0;
+    padding-left: 20px;
+    padding-right: 20px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    margin-right: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+    transition-duration: 0.2s;
+    transition-timing-function: ease-out-back;
+}
+
+.blockButton:hover:enabled {
+    transition-duration: 0.2s;
+    transition-timing-function: ease-out-back;
+    scale: 1.05 1.05;
+}
+
+.blockButton:active:enabled {
+    transition-duration: 0.2s;
+    transition-timing-function: ease-out-back;
+    scale: 1.05 1.05;
+}
+
+.blockButton_red {
+    background-color: rgb(255, 67, 67);
+}
+
+.blockButton_green {
+    background-color: rgb(128, 255, 128);
+}
+
+.blockButton_yellow {
+    background-color: rgb(255, 234, 128);
+}
+
+.blockButton_blue {
+    background-color: rgb(33, 156, 235);
+}
+
+.blockButton_small {
+    font-size: 12px;
+    padding: 0 10px;
+    height: 24px;
+}
+
+.blockTitle {
+    font-size: 20px;
+    -unity-font-style: bold;
+    margin-bottom: 2px;
+    white-space: normal;
+}
+
+.blockText {
+    font-size: 14px;
+    white-space: normal;
+}
+
+.logo {
+    background-image: url('project://database/Packages/io.spatial.unitysdk/Editor/Textures/GUI/SpatialLogo.png?fileID=2800000&guid=c76d105e95406410985f7f2c1f2bf0a0&type=3#SpatialLogo');
+    width: 30px;
+    height: 30px;
+    -unity-background-scale-mode: scale-to-fit;
+    margin-left: 4px;
+    margin-right: 4px;
+    margin-top: 0;
+    margin-bottom: 0;
+    -unity-background-image-tint-color: rgba(255, 255, 255, 0.5);
+}
+
+.logotext {
+    font-size: 12px;
+    -unity-font-style: bold;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.mutedText {
+    opacity: 0.5;
+}

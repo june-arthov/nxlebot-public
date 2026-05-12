@@ -1,0 +1,56 @@
+.issueContainerError {
+    color: rgb(235, 50, 35);
+    -unity-background-image-tint-color: rgb(235, 50, 35);
+}
+
+.issueContainerWarning {
+    color: rgb(255, 253, 84);
+    -unity-background-image-tint-color: rgb(255, 253, 84);
+}
+
+.issueContainer {
+    background-color: rgba(0, 0, 0, 0);
+    justify-content: flex-start;
+    flex-direction: row;
+    align-items: center;
+    padding-left: 6px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+    transition-property: translate, background-color;
+    transition-duration: 0.3s, 0.2s;
+    transition-timing-function: ease-out-back, ease;
+    color: rgb(0, 0, 0);
+    border-top-left-radius: 8px;
+    border-bottom-left-radius: 8px;
+    border-top-right-radius: 8px;
+    border-bottom-right-radius: 8px;
+}
+
+.issueContainer:hover {
+    transition-property: translate, background-color;
+    transition-duration: 0.15s, 0.2s;
+    transition-timing-function: ease-out-back, ease;
+    translate: 6px 0;
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.issueContainer:active {
+    transition-property: translate, background-color;
+    transition-duration: 0.15s, 0.2s;
+    transition-timing-function: ease-out-back, ease;
+    translate: 3px 0;
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.issueContainerSelected {
+    background-color: rgba(255, 255, 255, 0.25);
+    color: rgba(0, 0, 0, 255);
+}
+
+.issueContainerSelected:hover {
+    background-color: rgba(255, 255, 255, 0.25);
+}
+
+.issueContainerSelected:active {
+    background-color: rgba(255, 255, 255, 0.25);
+}

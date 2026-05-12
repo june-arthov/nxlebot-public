@@ -1,0 +1,178 @@
+# Contributing to NeuroSkill
+
+## Prerequisites
+
+- **Rust** (latest stable) via [rustup](https://rustup.rs/)
+- **Node.js** ≥ 20 with npm
+- **Tauri CLI**: installed via `npm install` (workspace devDependency)
+- **Platform SDKs**: Xcode (macOS), Visual Studio Build Tools + LLVM (Windows), build-essential (Linux)
+- **Vulkan SDK** (Linux/Windows, for `llm-vulkan` feature)
+
+## Quick Start
+
+```bash
+# Clone
+git clone http://192.168.99.99:3000/NeuroSkill-com/skill.git
+cd skill
+
+# Install JS dependencies & configure git hooks
+npm install
+
+# Run in development mode (starts Vite dev server + Tauri)
+npm run tauri dev
+
+# Or build a release
+npm run tauri:build
+```
+
+## Project Structure
+
+```
+├── crates/              # Rust workspace crates (no Tauri deps)
+│   ├── skill-eeg/       # EEG signal processing
+│   ├── skill-llm/       # Local LLM inference
+│   ├── skill-tools/     # LLM function-calling
+│   └── ...              # See AGENTS.md for full list
+├── src/                 # SvelteKit frontend
+│   ├── lib/             # Shared components & utilities
+│   ├── routes/          # Page routes
+│   └── tests/           # Frontend tests
+├── src-tauri/           # Tauri app shell
+├── scripts/             # Build & CI scripts
+└── changes/             # Changelog fragments
+```
+
+## Development Workflow
+
+### Running Tests
+
+```bash
+# ── Fast feedback (daily development) ─────────────────────────────
+npm run test:rust          # Tier 1 Rust: ~5 s warm, ~27 s clean (350 tests)
+npm test                   # Frontend (Vitest): 683 tests in ~7 s
+
+# ── Full Rust test suite ──────────────────────────────────────────
+npm run test:rust:all      # All 3 tiers (~65 s clean, ~650 Rust tests)
+
+# ── Tiered Rust runner (scripts/test-fast.sh) ─────────────────────
+bash scripts/test-fast.sh              # Tier 1 only
+bash scripts/test-fast.sh --tier 2     # Tiers 1-2
+bash scripts/test-fast.sh --all        # All tiers
+bash scripts/test-fast.sh --continue   # Don't stop on first failure
+
+# ── Slow / CI-only ────────────────────────────────────────────────
+npm run test:llm:e2e       # LLM E2E (downloads model, ~15 s cached)
+npm run test:smoke         # Build verification
+```
+
+#### Rust Test Tiers
+
+Tests are split into tiers by compilation cost so you get fast feedback:
+
+| Tier | What it tests | Clean build | Warm cache | Tests |
+|------|---------------|-------------|------------|-------|
+| **1** | Core logic: eeg, tools, jobs, constants, exg, gpu | ~27 s | ~5 s | ~350 |
+| **2** | + data, settings, history, health, router, tts, labels, skills, commands | ~53 s | ~8 s | ~550 |
+| **3** | + screenshots, devices, llm (adds ML, TLS, heavy native deps) | ~65 s | ~15 s | ~650 |
+| **E2E** | LLM download → inference → tool calling (manual/CI dispatch) | ~15 s | ~12 s | 1 |
+
+> **Tip:** Install [sccache](https://github.com/mozilla/sccache) (`brew install sccache`) and
+> set `RUSTC_WRAPPER=sccache` for faster clean rebuilds.
+
+See [docs/TEST-COVERAGE.md](docs/TEST-COVERAGE.md) for a detailed coverage analysis and gaps.
+
+### Code Quality
+
+```bash
+# Frontend lint & format
+npm run lint          # Check
+npm run lint:fix      # Auto-fix
+npm run format        # Format only
+npm run format:check  # Check formatting
+
+# Rust
+cargo fmt             # Format
+cargo fmt --check     # Check formatting
+cargo clippy --workspace  # Lint
+
+# Type checking
+npm run check         # Svelte + TypeScript
+
+# i18n
+npm run sync:i18n:check   # Verify translation keys
+npm run sync:i18n:fix     # Auto-fix missing keys
+
+# Dependency audit
+cargo audit
+cargo deny check
+```
+
+### Faster local `cargo check`
+
+`cargo check -p skill` can be slow on a cold cache because it compiles many heavy deps.
+Use these faster options during day-to-day work:
+
+```bash
+# Check only crates affected by your branch (same idea as CI)
+BASE=origin/main
+FLAGS=$(bash scripts/changed-crates.sh "$BASE")
+cargo check $FLAGS
+
+# Or check only core app lib target
+cargo check -p skill --lib
+
+# Optional: speed up rebuilds with sccache
+export RUSTC_WRAPPER=sccache
+```
+
+### Commit Checklist
+
+The pre-commit hook automatically checks:
+- i18n key synchronisation (when i18n files are staged)
+- Frontend formatting via Biome
+- Rust formatting via `cargo fmt`
+
+### Changelog Fragments
+
+Every feature or bugfix **must** include a changelog fragment:
+
+1. Create a `.md` file in `changes/unreleased/` (e.g., `feat-my-change.md`)
+2. Use the format:
+   ```markdown
+   ### Features
+
+   - **Short title**: description of the change.
+   ```
+3. Valid categories: `Features`, `Performance`, `Bugfixes`, `Refactor`, `Build`, `CLI`, `UI`, `LLM`, `Server`, `i18n`, `Docs`, `Dependencies`
+
+At release time, `npm run bump` compiles fragments into versioned release notes.
+
+## Secrets & Keychain
+
+In **release builds**, API tokens and device credentials are stored in the
+system keychain (macOS Keychain, Windows Credential Manager, Linux Secret
+Service) and stripped from `settings.json`.
+
+In **debug builds** (`tauri dev` / `cargo run`), the keychain is **skipped
+entirely**.  Secrets stay in `settings.json` so they persist across rebuilds.
+This avoids macOS prompting for keychain access on every launch — the dev
+binary has a different code signature on every build, which triggers a new
+authorization dialog each time.
+
+> **No password prompts during development.** If you're seeing keychain
+> dialogs, make sure you're running a debug build (`npm run tauri dev`),
+> not a release build.
+
+## Architecture Notes
+
+- All Rust crates are **Tauri-independent** — they can be tested and used standalone.
+- The workspace shares a single `target/` directory (configured in `.cargo/config.toml`).
+- Frontend uses **SvelteKit** in SPA mode with **Tailwind CSS v4**.
+- EEG processing uses the device's actual sample rate — never hardcode 256 Hz.
+- See `AGENTS.md` for comprehensive rules on encoding, accent colors, session files, and multi-device DSP.
+
+## Encoding
+
+- All source files and CI artifacts use **UTF-8 without BOM**.
+- No literal non-ASCII in CI scripts — use language escapes instead.
+- See `AGENTS.md` § "CI / Shared Artifact Encoding Rule" for details.

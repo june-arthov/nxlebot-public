@@ -1,0 +1,26 @@
+# backup-db.ocp — Database Backup to S3
+# Usage: set DB_NAME and S3_BUCKET, then run
+
+set DB_NAME = "myapp_production"
+set BACKUP_FILE = "backup_$DB_NAME.sql"
+set S3_BUCKET = "myapp-backups"
+
+echo "========================================="
+echo "Database Backup Pipeline"
+echo "Database: $DB_NAME"
+echo "Destination: s3://$S3_BUCKET/daily/"
+echo "========================================="
+
+echo "[1/4] Dumping database..."
+run "pg_dump $DB_NAME > /tmp/$BACKUP_FILE"
+
+echo "[2/4] Compressing..."
+run "gzip /tmp/$BACKUP_FILE"
+
+echo "[3/4] Uploading to S3..."
+run "aws s3 cp /tmp/$BACKUP_FILE.gz s3://$S3_BUCKET/daily/"
+
+echo "[4/4] Cleaning up..."
+run "rm /tmp/$BACKUP_FILE.gz"
+
+echo "Backup complete! ✅"

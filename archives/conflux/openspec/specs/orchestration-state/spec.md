@@ -1,0 +1,806 @@
+## Purpose
+
+Provide a single, reducer-owned model for tracking the runtime lifecycle of each change across serial and parallel execution modes. All display status is derived from this shared state; consumers never own an independent lifecycle copy.
+
+## Requirements
+
+### Requirement: Reducer-Owned Change Runtime State
+
+The system SHALL maintain reducer-owned runtime state for each change in `OrchestratorState`.
+
+The runtime state MUST distinguish at least the following concerns:
+
+- queue intent
+- active execution stage
+- wait reason
+- terminal result
+- workspace observation summary
+- execution mode (Serial or Parallel)
+
+Display status exposed to consumers MAY be derived from this runtime state, but consumers SHALL NOT own an independent lifecycle copy.
+
+#### Scenario: Runtime state preserves queued intent while blocked
+
+- **GIVEN** a change is queued for execution
+- **AND** dependency analysis reports unresolved dependencies
+- **WHEN** the reducer applies the dependency-blocked input
+- **THEN** the runtime state records queued intent
+- **AND** the wait reason becomes blocked with dependency details
+- **AND** the derived display status is `blocked`
+
+#### Scenario: Runtime state distinguishes merge wait from archived result
+
+- **GIVEN** archive has completed for a change in parallel execution mode
+- **WHEN** the reducer applies the `ChangeArchived` event
+- **THEN** the wait reason becomes merge-wait
+- **AND** the terminal state remains `None` (not yet terminal)
+- **AND** the derived display status is `merge wait`
+
+### Requirement: Reducer Input Precedence and Idempotency
+
+The reducer SHALL accept mutations only through structured inputs: user commands, execution events, and workspace observations.
+
+The reducer MUST be idempotent for duplicate inputs and MUST ignore stale inputs that would regress terminal state.
+
+Execution events SHALL own active-stage and terminal transitions. Workspace observations SHALL reconcile durable wait/recovery state and MUST NOT override an active execution stage.
+
+#### Scenario: Duplicate event is a no-op
+
+- **GIVEN** a change is already in an applying activity state
+- **WHEN** the same `ApplyStarted` event is processed again
+- **THEN** the reducer leaves the runtime state unchanged
+- **AND** no invalid regression occurs
+
+#### Scenario: Late failure does not regress merged state
+
+- **GIVEN** a change is already in terminal merged state
+- **WHEN** a stale `ResolveFailed` or `ApplyFailed` event arrives
+- **THEN** the reducer ignores the stale event
+- **AND** the runtime state remains merged
+
+#### Scenario: Observation does not override active resolve
+
+- **GIVEN** a change is currently resolving
+- **WHEN** auto-refresh observes that the worktree is archived and ahead of base
+- **THEN** the reducer stores the observation
+- **AND** the displayed status remains `resolving`
+
+### Requirement: Resolve Wait Queue Ownership
+
+The system SHALL own the resolve wait queue in shared orchestration state rather than in TUI-local lifecycle state.
+
+`ResolveWait` SHALL represent reducer-owned queued resolve intent while another resolve is active.
+
+Manual resolve lifecycle events that clear or complete queued resolve intent MUST also be applied to the shared orchestration reducer before later refresh-driven display reconciliation can occur.
+
+#### Scenario: Resolve wait queue is reducer-owned
+
+- **GIVEN** one change is currently resolving
+- **AND** the user requests resolve for another change in `MergeWait`
+- **WHEN** the reducer processes the command
+- **THEN** the second change enters `ResolveWait`
+- **AND** the change_id is stored in the shared resolve wait queue
+
+#### Scenario: ResolveWait is not reconstructed from workspace only
+
+- **GIVEN** a change has an archived workspace that is still ahead of base
+- **WHEN** the system rebuilds state from workspace observation alone
+- **THEN** the reducer may recover `MergeWait`
+- **AND** the reducer does not recover `ResolveWait` unless the shared resolve wait queue contains that change
+
+#### Scenario: Manual resolve completion clears reducer-owned resolve wait
+
+- **GIVEN** the user has triggered manual resolve for a change that entered `ResolveWait`
+- **AND** the shared reducer currently derives display status `resolve pending`
+- **WHEN** the manual resolve completes successfully and the merge result becomes terminal
+- **THEN** the shared reducer clears the queued resolve wait for that change
+- **AND** subsequent `ChangesRefreshed` reconciliation does not derive `resolve pending` for the merged change
+
+### Requirement: Execution Mode Determines Archive Terminal Semantics
+
+The system SHALL support two execution modes — Serial and Parallel — that determine how `ChangeArchived` events affect terminal state.
+
+In Serial mode, `ChangeArchived` SHALL set the terminal state to `Archived` (a terminal state from which no further transitions occur).
+
+In Parallel mode, `ChangeArchived` SHALL set the wait state to `MergeWait` (a non-terminal state) to allow the subsequent merge step to transition the change to `Merged`.
+
+#### Scenario: Serial mode treats archive as terminal
+
+- **GIVEN** the orchestrator is running in Serial execution mode
+- **WHEN** a change receives a `ChangeArchived` event
+- **THEN** the terminal state becomes `Archived`
+- **AND** the derived display status is `archived`
+- **AND** subsequent `MergeCompleted` events for this change are ignored
+
+#### Scenario: Parallel mode treats archive as merge-wait
+
+- **GIVEN** the orchestrator is running in Parallel execution mode
+- **WHEN** a change receives a `ChangeArchived` event
+- **THEN** the wait state becomes `MergeWait`
+- **AND** the terminal state remains `None`
+- **AND** the derived display status is `merge wait`
+
+#### Scenario: Parallel mode archive then merge completes lifecycle
+
+- **GIVEN** the orchestrator is running in Parallel execution mode
+- **AND** a change has received a `ChangeArchived` event (currently in `MergeWait`)
+- **WHEN** a `MergeCompleted` event is received for the change
+- **THEN** the terminal state becomes `Merged`
+- **AND** the derived display status is `merged`
+
+
+### Requirement: Parallel Resume Applies Archive-Complete Wait Semantics
+
+In Parallel execution mode, when a resumed workspace is already archive-complete, the shared lifecycle state SHALL apply the same wait semantics as a `ChangeArchived` transition.
+
+This resume-time archive-complete transition MUST preserve the user-visible merge-wait lifecycle and MUST NOT fall back to `not queued` before merge handling has been attempted.
+
+#### Scenario: Resume-time archived change becomes merge wait
+
+- **GIVEN** the orchestrator is running in Parallel execution mode
+- **AND** a reused workspace is detected as already archived but not yet merged
+- **WHEN** the parallel resume path reports archive-complete completion for that change
+- **THEN** the wait state becomes `MergeWait`
+- **AND** the derived display status is merge wait
+- **AND** the change does not regress to `not queued` during the restart flow
+
+
+#
+
+
+### Requirement: Resolve Wait Queue Ownership
+
+The system SHALL own the resolve wait queue in shared orchestration state rather than in TUI-local lifecycle state.
+
+`ResolveWait` SHALL represent reducer-owned queued resolve intent while another resolve is active, or a deferred change that has been auto-promoted into the next resolve flow after dependency or merge preconditions are satisfied.
+
+Manual resolve lifecycle events that clear or complete queued resolve intent MUST also be applied to the shared orchestration reducer before later refresh-driven display reconciliation can occur.
+
+Workspace observation alone MAY recover `MergeWait` for archived-but-unmerged workspaces, but it MUST NOT erase reducer-owned auto-resolve intent that was established from `MergeDeferred` reason tracking.
+
+#### Scenario: Auto-promoted deferred change enters reducer-owned resolve wait
+- **GIVEN** a change was deferred because another merge or resolve had to complete first
+- **WHEN** that prerequisite completes and the reducer receives the promotion signal
+- **THEN** the change enters reducer-owned `ResolveWait` or `Resolving`
+- **AND** subsequent refresh reconciliation does not regress it to `MergeWait`
+
+#### Scenario: Workspace refresh does not overwrite auto-resolve intent
+- **GIVEN** a change has already been auto-promoted from deferred merge waiting into reducer-owned resolve intent
+- **WHEN** a later `ChangesRefreshed` event observes the workspace as archived
+- **THEN** the reducer preserves the auto-resolve wait state
+- **AND** the displayed status does not regress to a stale manual-wait state
+
+## Requirements
+
+### Requirement: merge-deferred-reducer-sync
+
+TUI runner の `apply_to_reducer` 条件に `MergeDeferred` イベントを含め、reducer への状態反映を保証する。これにより、次の `ChangesRefreshed` で `apply_display_statuses_from_reducer` が MergeWait を上書きして消す二次バグを防止する。
+
+#### Scenario: merge-deferred-reflected-in-reducer
+
+**Given**: Change A が archive 完了し、merge が dirty base で deferred された
+**When**: `MergeDeferred(auto_resumable=false)` イベントが TUI runner で処理される
+**Then**: reducer の `apply_execution_event` が呼ばれ、Change A の `WaitState::MergeWait` が設定される
+
+#### Scenario: merge-wait-survives-changes-refreshed
+
+**Given**: Change A が MergeDeferred 経由で reducer に MergeWait が設定されている
+**When**: 次の `ChangesRefreshed` イベントが処理される
+**Then**: reducer の `display_status()` が "merge wait" を返し、TUI の M キーヒントが表示され続ける
+
+
+### Requirement: post-archive-merge-dispatch
+
+When a change is archived in parallel mode, the orchestrator must attempt to merge or queue the change for resolve, rather than leaving it in MergeWait indefinitely.
+
+#### Scenario: archive-completes-while-resolve-active
+
+**Given**: Change A is in Resolving state and change B has just been archived in parallel mode
+**When**: The ChangeArchived event for B is processed by the TUI orchestrator
+**Then**: B transitions to ResolveWait (not MergeWait) and is added to the resolve queue for automatic execution after A's resolve completes
+
+#### Scenario: archive-completes-no-active-resolve
+
+**Given**: No resolve is currently active and change B has just been archived in parallel mode
+**When**: The ChangeArchived event for B is processed by the TUI orchestrator
+**Then**: An immediate merge attempt is initiated for B (via ResolveMerge command)
+
+
+### Requirement: OrchestratorState が唯一のループ状態ソースである
+`OrchestratorState` はオーケストレーションループの状態（apply 回数、pending/archived/completed 変更セット、イテレーション番号、current change ID）の唯一の正規ソースでなければならない（MUST）。
+
+`Orchestrator` struct および `tui::orchestrator::run_orchestrator` 関数は、これらのカウンタやセットをローカルフィールド/変数として独自に保持してはならない（SHALL NOT）。
+
+状態の参照は `shared_state.read().await` 経由で行い、状態の変更は `apply_execution_event()` または `apply_command()` 経由で行わなければならない（MUST）。
+
+#### Scenario: Orchestrator struct がローカル apply_counts を持たない
+- **WHEN** `Orchestrator` struct の定義を確認する
+- **THEN** `apply_counts`, `changes_processed`, `iteration`, `current_change_id` フィールドが存在しない
+- **AND** これらの値は `self.shared_state.read().await` 経由で取得される
+
+#### Scenario: TUI orchestrator がローカル pending_changes を持たない
+- **WHEN** `tui::orchestrator::run_orchestrator` 関数の実装を確認する
+- **THEN** `apply_counts`, `pending_changes`, `changes_processed`, `total_changes` のローカル変数が存在しない
+- **AND** これらの値は `shared_state.read().await` 経由で取得される
+
+#### Scenario: ステート一貫性の保証
+- **WHEN** serial モードでの実行中に Change が archived される
+- **THEN** `OrchestratorState` の `pending_changes` が減少する
+- **AND** `changes_processed` が増加する
+- **AND** 他に同じ情報を保持する変数が更新される必要がない
+
+
+### Requirement: Reducer-Owned Change Runtime State
+
+The Project SHALL maintain reducer-owned runtime state for each Change in `OrchestratorState`.
+
+The system follows a three-tier hierarchy: `Orchestration 1--* Project 1--* Change`.
+
+- **Orchestration**: The top-level runtime that manages one or more Projects.
+- **Project**: A set of Changes sharing one `OrchestratorState` instance, one resolve queue, and one execution mode (Serial or Parallel). `OrchestratorState` is the single source of truth for a Project's lifecycle.
+- **Change**: A unit of work within a Project, tracked by `ChangeRuntimeState` inside the Project's `OrchestratorState`.
+
+The runtime state MUST distinguish at least the following concerns:
+
+- queue intent
+- active execution stage (per-Change: Applying, Accepting, Archiving, Resolving, Idle)
+- wait reason
+- terminal result
+- workspace observation summary
+- execution mode (Serial or Parallel)
+
+Display status exposed to consumers MAY be derived from this runtime state, but consumers SHALL NOT own an independent lifecycle copy.
+
+`is_resolving_active()` operates at Project scope: it returns true when any Change within the Project has `ActivityState::Resolving`. This Project-scoped flag SHALL be used exclusively for resolve operation serialization (ensuring only one resolve runs at a time within a Project). It SHALL NOT be used to block apply, accept, archive, or other non-resolve operations on other Changes within the same Project.
+
+#### Scenario: Runtime state preserves queued intent while blocked
+
+- **GIVEN** a Change is queued for execution within a Project
+- **AND** dependency analysis reports unresolved dependencies
+- **WHEN** the reducer applies the dependency-blocked input
+- **THEN** the runtime state records queued intent
+- **AND** the wait reason becomes blocked with dependency details
+- **AND** the derived display status is `blocked`
+
+#### Scenario: Runtime state distinguishes merge wait from archived result
+
+- **GIVEN** archive has completed for a Change in parallel execution mode
+- **WHEN** the reducer applies the `ChangeArchived` event
+- **THEN** the wait reason becomes merge-wait
+- **AND** the terminal state remains `None` (not yet terminal)
+- **AND** the derived display status is `merge wait`
+
+#### Scenario: is_resolving_active does not block non-resolve operations
+
+- **GIVEN** Change A within a Project has `ActivityState::Resolving`
+- **AND** Change B within the same Project is queued for apply
+- **WHEN** the orchestrator checks whether to start Change B's apply
+- **THEN** Change B's apply proceeds regardless of Change A's resolving state
+- **AND** `is_resolving_active()` is not consulted for this decision
+
+### Requirement: Resolve Wait Queue Ownership
+
+The Project SHALL own the resolve wait queue in shared orchestration state (`OrchestratorState`) rather than in TUI-local lifecycle state. This is a Core-owned state; Frontend implementations (TUI, Web) SHALL NOT maintain independent copies of the resolve queue.
+
+`ResolveWait` SHALL represent reducer-owned queued resolve intent while another resolve is active within the same Project.
+
+Manual resolve lifecycle events that clear or complete queued resolve intent MUST also be applied to the shared orchestration reducer before later refresh-driven display reconciliation can occur.
+
+Frontend MAY cache the resolve queue state for rendering purposes, but the cache MUST be derived from the Core's `OrchestratorState` and MUST NOT serve as the source of truth for resolve ordering or execution decisions.
+#### Scenario: Resolve wait queue is reducer-owned
+
+- **GIVEN** one Change within a Project is currently resolving
+- **AND** the user requests resolve for another Change in `MergeWait` within the same Project
+- **WHEN** the reducer processes the command
+- **THEN** the second Change enters `ResolveWait`
+- **AND** the change_id is stored in the Project's shared resolve wait queue
+- **AND** Frontend render caches are updated from this Core state
+
+#### Scenario: ResolveWait is not reconstructed from workspace only
+
+- **GIVEN** a Change has an archived workspace that is still ahead of base
+- **WHEN** the system rebuilds state from workspace observation alone
+- **THEN** the reducer may recover `MergeWait`
+- **AND** the reducer does not recover `ResolveWait` unless the Project's shared resolve wait queue contains that Change
+
+#### Scenario: Frontend does not own resolve queue independently
+
+- **GIVEN** TUI or Web UI needs to display the resolve queue
+- **WHEN** the resolve queue is accessed for rendering
+- **THEN** the displayed queue is derived from `OrchestratorState.resolve_wait_queue`
+- **AND** Frontend does not maintain a separate FIFO queue that diverges from Core state
+
+
+### Requirement: Reducer-Owned Change Runtime State
+
+The system SHALL maintain reducer-owned runtime state for each change in `OrchestratorState`.
+
+The runtime state MUST distinguish at least the following concerns:
+
+- queue intent
+- active execution stage
+- wait reason
+- terminal result
+- workspace observation summary
+- execution mode (Serial or Parallel)
+
+The terminal result MUST include `Rejected` as a permanent terminal state distinct from `Error`. A rejected change is one where acceptance has determined the specification is unimplementable, requiring a rollback to the base branch with a documented reason.
+
+Display status exposed to consumers MAY be derived from this runtime state, but consumers SHALL NOT own an independent lifecycle copy.
+
+#### Scenario: Runtime state preserves queued intent while blocked
+
+- **GIVEN** a change is queued for execution
+- **AND** dependency analysis reports unresolved dependencies
+- **WHEN** the reducer applies the dependency-blocked input
+- **THEN** the runtime state records queued intent
+- **AND** the wait reason becomes blocked with dependency details
+- **AND** the derived display status is `blocked`
+
+#### Scenario: Runtime state distinguishes merge wait from archived result
+
+- **GIVEN** archive has completed for a change in parallel execution mode
+- **WHEN** the reducer applies the `ChangeArchived` event
+- **THEN** the wait reason becomes merge-wait
+- **AND** the terminal state remains `None` (not yet terminal)
+- **AND** the derived display status is `merge wait`
+
+#### Scenario: Acceptance Blocked transitions to Rejected terminal state
+
+- **GIVEN** acceptance returns a `Blocked` verdict for a change
+- **WHEN** the rejection flow completes (`REJECTED.md` committed and worktree removed)
+- **THEN** the terminal state becomes `Rejected` with the rejection reason
+- **AND** the derived display status is `rejected`
+- **AND** the change cannot be re-queued via `AddToQueue`
+
+#### Scenario: Rejected change cannot be re-queued
+
+- **GIVEN** a change is in `Rejected` terminal state
+- **WHEN** a user or system issues `AddToQueue` for that change
+- **THEN** the reducer returns `NoOp`
+- **AND** the runtime state remains unchanged
+
+## Requirements
+
+### Requirement: Rejection Flow Execution
+
+The system SHALL execute a rejection flow when acceptance returns a `Blocked` verdict. The rejection flow MUST perform the following steps in order:
+
+1. Extract the rejection reason from acceptance findings
+2. Checkout the base branch
+3. Generate `openspec/changes/<change_id>/REJECTED.md` containing the rejection reason and timestamp
+4. Stage and commit only `openspec/changes/<change_id>/REJECTED.md` on the base branch
+5. Delete the rejected worktree
+
+The rejection flow SHALL be used by both serial and parallel execution services.
+
+#### Scenario: Rejection flow commits only REJECTED.md and cleans worktree
+
+- **GIVEN** acceptance has returned `Blocked` for change `fix-auth`
+- **WHEN** the rejection flow executes
+- **THEN** `openspec/changes/fix-auth/REJECTED.md` is created with the rejection reason
+- **AND** the base commit includes only `openspec/changes/fix-auth/REJECTED.md`
+- **AND** the worktree for `fix-auth` is deleted
+
+#### Scenario: Rejection flow does not run openspec resolve
+
+- **GIVEN** acceptance has returned `Blocked` for change `fix-auth`
+- **WHEN** the rejection flow executes
+- **THEN** `openspec resolve fix-auth` is not called
+- **AND** rejection completion does not depend on OpenSpec CLI resolve availability
+
+#### Scenario: Rejection flow failure falls back to error state
+
+- **GIVEN** acceptance has returned `Blocked` for a change
+- **WHEN** any step of the rejection flow fails (e.g., git commit fails)
+- **THEN** the change transitions to `Error` terminal state
+- **AND** the worktree is preserved for manual inspection
+
+### Requirement: Rejected Change Exclusion from Change Listing
+
+The system SHALL treat `openspec/changes/<change_id>/REJECTED.md` as the durable rejection marker and SHALL exclude marker-bearing changes from the active listing returned by `list_changes_native()`.
+
+When a previously rejected change reappears in the active listing because its `REJECTED.md` marker has been removed from the base branch, the runtime SHALL clear the in-memory `Rejected` terminal state for that change and restore it to the default non-terminal state (`terminal = None`, `activity = Idle`, `wait_state = None`, `queue_intent = NotQueued`). A reactivated change SHALL be eligible for `AddToQueue` and SHALL display as `not queued` after refresh.
+
+This ensures rejected changes are not picked up by `cflx run` or presented as candidates for queue addition.
+
+#### Scenario: Rejected marker excludes change from active list
+
+- **GIVEN** `openspec/changes/fix-auth/REJECTED.md` exists
+- **AND** `openspec/changes/fix-auth/proposal.md` exists
+- **WHEN** `list_changes_native()` is called
+- **THEN** `fix-auth` is NOT included in the returned change list
+
+#### Scenario: Non-rejected change with proposal is included
+
+- **GIVEN** `openspec/changes/add-feature/proposal.md` exists
+- **AND** `openspec/changes/add-feature/REJECTED.md` does NOT exist
+- **WHEN** `list_changes_native()` is called
+- **THEN** `add-feature` IS included in the returned change list
+
+#### Scenario: Removal of REJECTED marker reactivates change in reducer
+
+- **GIVEN** change `fix-auth` was previously rejected and the runtime holds `TerminalState::Rejected` for it
+- **AND** the user deletes `openspec/changes/fix-auth/REJECTED.md` from the base branch
+- **WHEN** `ChangesRefreshed` fires with `fix-auth` present in the active change list
+- **THEN** the runtime clears `TerminalState::Rejected` for `fix-auth`
+- **AND** the display status for `fix-auth` becomes `not queued`
+- **AND** `AddToQueue("fix-auth")` succeeds (not NoOp)
+
+#### Scenario: Reactivated change can be queued again
+
+- **GIVEN** change `fix-auth` has been reactivated after `REJECTED.md` removal and refresh
+- **WHEN** the user queues `fix-auth` via `AddToQueue`
+- **THEN** the display status becomes `queued`
+- **AND** the change is eligible for execution dispatch
+
+#### Scenario: Marker still present keeps change excluded
+
+- **GIVEN** `openspec/changes/fix-auth/REJECTED.md` still exists on the base branch
+- **WHEN** `ChangesRefreshed` fires
+- **THEN** `fix-auth` is NOT in the active change list
+- **AND** the runtime does NOT clear `TerminalState::Rejected`
+
+
+### Requirement: Parallel mode treats archive as merge-wait
+
+- **GIVEN** the orchestrator is running in Parallel execution mode
+- **WHEN** a change receives a `ChangeArchived` event
+- **THEN** the wait state becomes `MergeWait`
+- **AND** the terminal state remains `None`
+- **AND** the derived display status is `merge wait`
+
+A parallel archived change MUST leave `MergeWait` as soon as merge handling can proceed automatically. Internal recoverable preconditions such as lazy base-branch initialization MUST NOT keep the change in `MergeWait`; only deferred merge conditions that truly require waiting or user intervention may do so.
+
+#### Scenario: archived change does not stay merge wait for recoverable branch initialization
+- **GIVEN** the orchestrator is running in Parallel execution mode
+- **AND** a change has received a `ChangeArchived` event
+- **AND** merge handling discovers that the Git base branch has not yet been cached
+- **WHEN** the system can initialize that base branch from repository state
+- **THEN** the change proceeds through merge handling
+- **AND** the reducer does not preserve `merge wait` solely because of the missing cached branch name
+
+#### Scenario: archived change enters error instead of merge wait on unrecoverable branch discovery failure
+- **GIVEN** the orchestrator is running in Parallel execution mode
+- **AND** a change has received a `ChangeArchived` event
+- **AND** merge handling cannot determine the base branch because the repository is detached HEAD
+- **WHEN** the failure is reported
+- **THEN** the change is treated as an execution error
+- **AND** the reducer does not classify the failure as `merge wait`
+
+
+### Requirement: Rejection Flow Execution
+
+The system SHALL execute a rejection flow when acceptance returns a `Blocked` verdict, including blocked verdicts that originated from apply execution through a rejection proposal file. Apply execution MAY generate `openspec/changes/<change_id>/REJECTED.md` as a rejection proposal when it encounters an implementation blocker that prevents completion. This proposal file SHALL NOT become a terminal rejection by itself. Acceptance SHALL review the blocker and decide whether to confirm the rejection. Only after acceptance confirms the blocked verdict SHALL the runtime treat the change as rejected, commit only `REJECTED.md` on the base branch, and delete the worktree.
+
+#### Scenario: apply-generated rejection proposal requires acceptance confirmation
+
+- **GIVEN** apply execution writes `openspec/changes/fix-auth/REJECTED.md` because of an implementation blocker
+- **WHEN** acceptance has not yet confirmed the blocked verdict
+- **THEN** the change is not yet in `Rejected` terminal state
+- **AND** no rejection flow commit is created on the base branch
+
+#### Scenario: acceptance-confirmed apply blocker transitions to rejected terminal state
+
+- **GIVEN** apply execution has generated `openspec/changes/fix-auth/REJECTED.md`
+- **AND** acceptance confirms the blocked verdict
+- **WHEN** the rejection flow completes
+- **THEN** the terminal state becomes `Rejected` with the rejection reason
+- **AND** the derived display status is `rejected`
+- **AND** the change cannot be re-queued via `AddToQueue`
+
+
+### Requirement: Rejection Flow Execution
+
+The system SHALL execute a rejection flow when acceptance returns a `Blocked` verdict, including blocked verdicts that originated from apply execution through a rejection proposal file. The rejection flow MUST write and commit only `openspec/changes/<change_id>/REJECTED.md` on the base branch. The rejection flow MUST NOT stage, merge, or commit any other files from the rejected worktree, including proposal, tasks, spec deltas, or product code changes. The runtime SHALL treat the `REJECTED.md` marker commit itself as the durable rejection record and SHALL NOT require `openspec resolve <change_id>` as part of the rejection flow.
+
+#### Scenario: rejection flow commits only REJECTED marker
+
+- **GIVEN** acceptance confirms a blocked verdict for `fix-auth`
+- **WHEN** the rejection flow executes
+- **THEN** the base branch commit includes `openspec/changes/fix-auth/REJECTED.md`
+- **AND** no other files from the rejected worktree are staged or committed
+
+#### Scenario: rejection flow does not invoke openspec resolve
+
+- **GIVEN** acceptance confirms a blocked verdict for `fix-auth`
+- **WHEN** the rejection flow executes
+- **THEN** `openspec resolve fix-auth` is not invoked
+- **AND** rejection completion does not depend on OpenSpec CLI availability
+
+#### Scenario: worktree cleanup occurs after reject marker commit
+
+- **GIVEN** the rejection flow has committed `openspec/changes/fix-auth/REJECTED.md` on the base branch
+- **WHEN** the flow completes
+- **THEN** the rejected worktree is cleaned up
+- **AND** the rejected change remains represented by the base-side `REJECTED.md` marker
+
+## Requirements
+
+### Requirement: Force stop and dequeue returns a running change to not queued
+
+The system SHALL support a force-stop-and-dequeue operation for a running change.
+
+This operation MUST cancel the in-flight execution for the target change and, once cancellation is confirmed, clear the reducer-owned runtime state back to a non-terminal idle queue-off state.
+
+After the operation completes, the target change MUST satisfy all of the following:
+
+- `queue_intent` is `NotQueued`
+- `activity` is `Idle`
+- `wait_state` is `None`
+- `terminal` is `None`
+- the derived display status is `not queued`
+
+The force-stop-and-dequeue operation MUST be distinct from terminal stop semantics such as `Stopped`, and MUST NOT leave the change in a terminal stopped state.
+
+#### Scenario: Running apply is force-stopped and dequeued
+
+- **GIVEN** a change is currently in an active execution stage such as `Applying`
+- **WHEN** the user invokes force-stop-and-dequeue for that change
+- **THEN** the in-flight execution is cancelled
+- **AND** after cancellation confirmation the reducer clears the change to `NotQueued` + `Idle` + `None wait` + `None terminal`
+- **AND** the derived display status is `not queued`
+
+#### Scenario: Stale stop completion does not create terminal stopped state
+
+- **GIVEN** a running change has already completed force-stop-and-dequeue
+- **WHEN** a late stop-related event from the cancelled worker arrives
+- **THEN** the reducer ignores any regression to terminal `Stopped`
+- **AND** the derived display status remains `not queued`
+
+### Requirement: Force-stop-and-dequeue does not auto-resume work
+
+After a change has been force-stopped and dequeued, the system SHALL NOT automatically re-queue or restart that change unless the user explicitly requests queueing again.
+
+#### Scenario: Refresh does not re-queue dequeued change
+
+- **GIVEN** a change has completed force-stop-and-dequeue and currently displays `not queued`
+- **WHEN** the system processes a later refresh or reconciliation pass
+- **THEN** the reducer preserves `NotQueued`
+- **AND** the change does not transition back to an active or queued state without a new explicit queue command
+
+### Requirement: Force-stop-and-dequeue only applies to retryable active work
+
+The system SHALL apply force-stop-and-dequeue only to changes that are currently retryable and in-flight or queued for in-flight cancellation handling.
+
+The operation MUST NOT convert permanent terminal changes such as `Archived`, `Merged`, or `Rejected` into `not queued`.
+
+#### Scenario: Archived change ignores force-stop-and-dequeue
+
+- **GIVEN** a change is already in terminal `Archived`
+- **WHEN** force-stop-and-dequeue is requested for that change
+- **THEN** the reducer treats the request as a no-op
+- **AND** the derived display status remains `archived`
+
+
+### Requirement: Reducer-Owned Change Runtime State
+
+The system SHALL maintain reducer-owned runtime state for each change in `OrchestratorState`.
+
+The runtime state MUST distinguish at least the following concerns:
+
+- queue intent
+- active execution stage
+- wait reason
+- terminal result
+- workspace observation summary
+- execution mode (Serial or Parallel)
+
+The active execution stage SHALL include a dedicated `Rejecting` stage distinct from `Applying`, `Accepting`, `Archiving`, and `Resolving`. Display status exposed to consumers MAY be derived from this runtime state, but consumers SHALL NOT own an independent lifecycle copy.
+
+#### Scenario: Runtime state preserves queued intent while blocked
+
+- **GIVEN** a change is queued for execution
+- **AND** dependency analysis reports unresolved dependencies
+- **WHEN** the reducer applies the dependency-blocked input
+- **THEN** the runtime state records queued intent
+- **AND** the wait reason becomes blocked with dependency details
+- **AND** the derived display status is `blocked`
+
+#### Scenario: Runtime state exposes rejecting as active stage
+
+- **GIVEN** apply execution generated `openspec/changes/fix-auth/REJECTED.md`
+- **WHEN** the reducer applies the rejection-review start event
+- **THEN** the active execution stage becomes `Rejecting`
+- **AND** the derived display status is `rejecting`
+- **AND** the change is not shown as `accepting`
+
+### Requirement: Rejected terminal state remains distinct from errors
+
+The terminal result MUST include `Rejected` as a permanent terminal state distinct from `Error`. A rejected change is one where rejecting review has confirmed the specification is unimplementable or otherwise out of scope for completion, requiring a rollback to the base branch with a documented reason.
+
+#### Scenario: rejecting-confirmed change becomes rejected terminal state
+
+- **GIVEN** a change is in `Rejecting`
+- **AND** the rejection flow completes (`REJECTED.md` committed and worktree removed)
+- **WHEN** the reducer applies the terminal rejection event
+- **THEN** the terminal result becomes `Rejected`
+- **AND** the derived display status is `rejected`
+
+### Requirement: Rejection proposal dismissal returns to apply with recovery tasks
+
+When rejecting review dismisses a worktree-local `openspec/changes/<change_id>/REJECTED.md` proposal, the runtime SHALL return the change to active apply rather than terminal rejection.
+
+Before returning to apply, the runtime SHALL remove the worktree-local `REJECTED.md` file and ensure `openspec/changes/<change_id>/tasks.md` contains at least one unchecked task describing a non-rejection recovery step. The runtime SHALL route this dismiss path directly back to `Applying` rather than through the normal acceptance stage.
+
+#### Scenario: dismissing rejection proposal resumes apply
+
+- **GIVEN** a change is currently in `Rejecting`
+- **AND** the worktree contains `openspec/changes/fix-auth/REJECTED.md`
+- **WHEN** rejecting review dismisses the reject proposal
+- **THEN** the worktree-local `REJECTED.md` is removed
+- **AND** `openspec/changes/fix-auth/tasks.md` is updated with at least one unchecked recovery task that is not a reject action
+- **AND** the active execution stage becomes `Applying`
+- **AND** the derived display status is `applying`
+
+
+### Requirement: Reducer-Owned Change Runtime State
+
+The active execution stage SHALL include lifecycle events for entering and leaving the `Rejecting` stage. The reducer SHALL support two outcomes from rejection review: confirmation (transition to `Rejected` terminal) and dismissal/resume (transition back to `Applying`).
+
+#### Scenario: Rejection review confirm transitions to rejected terminal
+
+- **GIVEN** a change is in `Rejecting` activity stage
+- **WHEN** the reducer applies a rejection-review-completed event with `Confirm` outcome
+- **THEN** the activity becomes `Idle`
+- **AND** the terminal state becomes `Rejected`
+- **AND** the derived display status is `rejected`
+
+#### Scenario: Rejection review resume transitions back to applying
+
+- **GIVEN** a change is in `Rejecting` activity stage
+- **WHEN** the reducer applies a rejection-review-completed event with `Resume` outcome
+- **THEN** the activity becomes `Applying`
+- **AND** the terminal state remains `None`
+- **AND** the derived display status is `applying`
+
+#### Scenario: Rejection review failure transitions to error terminal
+
+- **GIVEN** a change is in `Rejecting` activity stage
+- **WHEN** the reducer applies a rejection-review-failed event
+- **THEN** the activity becomes `Idle`
+- **AND** the terminal state becomes `Error`
+- **AND** the derived display status is `error`
+
+### Requirement: Reducer Input Precedence and Idempotency
+
+Execution events SHALL own active-stage and terminal transitions. Workspace observations SHALL reconcile durable wait/recovery state and MUST NOT override an active execution stage.
+
+When a workspace-status synchronization event is used, it SHALL target the specific change being updated. The reducer MUST NOT infer the target change from `current_change_id` when multiple changes may be active concurrently.
+
+#### Scenario: Workspace status sync targets the correct change
+
+- **GIVEN** change `a` is `Applying`
+- **AND** change `b` is `Rejecting`
+- **WHEN** a workspace-status synchronization event for `b` is applied
+- **THEN** only change `b` is updated
+- **AND** change `a` remains `Applying`
+
+#### Scenario: Parallel workspace status sync does not rely on current change id
+
+- **GIVEN** multiple changes are active in parallel mode
+- **WHEN** a workspace-status synchronization event arrives
+- **THEN** the reducer identifies the target change from the event payload itself
+- **AND** `current_change_id` is not used to decide which runtime entry to mutate
+
+### Requirement: Reducer-Owned Change Runtime State
+
+Display status exposed to consumers MAY be derived from this runtime state, but consumers SHALL NOT own an independent lifecycle copy.
+
+Server-mode WebSocket API (`/api/v1/ws`) SHALL derive per-change display status exclusively from `ChangeRuntimeState.display_status()` when the orchestrator state is available. A fallback to workspace file-state detection is permitted only when orchestrator state is unavailable, and the fallback MUST NOT map intermediate workspace states to misleading display statuses.
+
+#### Scenario: WebSocket reports reducer-derived status for active change
+
+- **GIVEN** a change is in `Accepting` activity stage in the reducer
+- **WHEN** a WebSocket client requests the change list
+- **THEN** the change status is reported as `accepting`
+- **AND** the status matches `ChangeRuntimeState.display_status()`
+
+#### Scenario: WebSocket fallback does not report misleading archiving
+
+- **GIVEN** orchestrator state is unavailable
+- **AND** workspace detection reports `Applied` state
+- **WHEN** a WebSocket client requests the change list
+- **THEN** the change status is NOT reported as `archiving`
+- **AND** the change status reflects the intermediate state accurately
+
+
+### Requirement: WebSocket change status consistency with TUI
+
+Server-mode WebSocket API SHALL produce the same set of display status strings as `ChangeRuntimeState.display_status()`. The system MUST NOT maintain a separate mapping from workspace states to display strings that diverges from the reducer-derived status vocabulary.
+
+#### Scenario: All display statuses are representable in WebSocket payloads
+
+- **GIVEN** the reducer can produce any of: `not queued`, `queued`, `blocked`, `applying`, `accepting`, `rejecting`, `archiving`, `resolving`, `merge wait`, `resolve pending`, `archived`, `merged`, `rejected`, `error`, `stopped`
+- **WHEN** a WebSocket client receives a change list
+- **THEN** the status field for each change is one of the above values
+
+### Requirement: Scheduler dispatch derives queued candidates from reducer state
+
+The parallel scheduler's decision to dispatch queued changes SHALL be derived from reducer-observable state (queue intent, active execution stage, available slots) rather than transient event flags. This ensures that changes with `QueueIntent::Queued` in the reducer are always considered for dispatch when execution capacity exists.
+
+#### Scenario: Reducer queued change is visible to scheduler dispatch
+
+- **GIVEN** a change has `QueueIntent::Queued` in the reducer
+- **AND** no activity stage is active for that change
+- **AND** available execution slots are greater than zero
+- **WHEN** the scheduler evaluates dispatch candidates
+- **THEN** the change is included in the re-analysis candidate set
+- **AND** the scheduler does not require a separate event flag to consider this change
+
+
+### Requirement: post-archive-merge-dispatch
+
+When a change is archived in parallel mode, the project-scoped reducer and orchestrator MUST classify the archived change according to whether another change in the same Project is already resolving.
+
+If another change in the same Project has `ActivityState::Resolving`, the archived change MUST enter `ResolveWait` so it remains eligible for automatic continuation after the active resolve completes. Otherwise, the archived change MAY enter `MergeWait` for manual or immediate merge handling according to the existing post-archive flow.
+
+#### Scenario: archive-completes-while-project-resolve-active
+
+- **Given** Change A in a Project is in `Resolving`
+- **And** Change B in the same Project has just been archived in parallel mode
+- **When** the reducer processes `ChangeArchived` for Change B
+- **Then** Change B enters `ResolveWait`
+- **And** the derived display status is `resolve pending`
+
+#### Scenario: archive-completes-without-project-resolve-active
+
+- **Given** no other Change in the same Project is in `Resolving`
+- **And** Change B has just been archived in parallel mode
+- **When** the reducer processes `ChangeArchived` for Change B
+- **Then** Change B enters `MergeWait`
+- **And** the derived display status is `merge wait`
+
+
+### Requirement: Rejected Change Exclusion from Change Listing
+
+The system SHALL treat `openspec/changes/<change_id>/REJECTED.md` as the durable rejection marker and SHALL exclude marker-bearing changes from the execution-oriented active listing returned by `list_changes_native()`.
+
+This exclusion contract applies to execution candidate discovery and queue addition. It SHALL NOT by itself forbid read-only operational surfaces such as the dashboard change list from showing the rejected change as a terminal status row.
+
+When a previously rejected change reappears in the active listing because its `REJECTED.md` marker has been removed from the base branch, the runtime SHALL clear the in-memory `Rejected` terminal state for that change and restore it to the default non-terminal state (`terminal = None`, `activity = Idle`, `wait_state = None`, `queue_intent = NotQueued`). A reactivated change SHALL be eligible for `AddToQueue` and SHALL display as `not queued` after refresh.
+
+#### Scenario: Rejected marker excludes change from active execution list
+
+- **GIVEN** `openspec/changes/fix-auth/REJECTED.md` exists
+- **AND** `openspec/changes/fix-auth/proposal.md` exists
+- **WHEN** `list_changes_native()` is called
+- **THEN** `fix-auth` is NOT included in the returned change list
+
+#### Scenario: Dashboard may still show rejected change
+
+- **GIVEN** `openspec/changes/fix-auth/REJECTED.md` exists
+- **AND** `openspec/changes/fix-auth/proposal.md` exists
+- **WHEN** a dashboard-facing change snapshot is built
+- **THEN** `fix-auth` MAY be included as a read-only rejected row
+- **AND** the execution-oriented active listing remains unchanged
+
+#### Scenario: Non-rejected change with proposal is included
+
+- **GIVEN** `openspec/changes/add-feature/proposal.md` exists
+- **AND** `openspec/changes/add-feature/REJECTED.md` does NOT exist
+- **WHEN** `list_changes_native()` is called
+- **THEN** `add-feature` IS included in the returned change list
+
+#### Scenario: Removal of REJECTED marker reactivates change in reducer
+
+- **GIVEN** change `fix-auth` was previously rejected and the runtime holds `TerminalState::Rejected` for it
+- **AND** the user deletes `openspec/changes/fix-auth/REJECTED.md` from the base branch
+- **WHEN** `ChangesRefreshed` fires with `fix-auth` present in the active change list
+- **THEN** the runtime clears `TerminalState::Rejected` for `fix-auth`
+- **AND** the display status for `fix-auth` becomes `not queued`
+- **AND** `AddToQueue("fix-auth")` succeeds (not NoOp)
+
+#### Scenario: Reactivated change can be queued again
+
+- **GIVEN** change `fix-auth` has been reactivated after `REJECTED.md` removal and refresh
+- **WHEN** the user queues `fix-auth` via `AddToQueue`
+- **THEN** the display status becomes `queued`
+- **AND** the change is eligible for execution dispatch
+
+#### Scenario: Marker still present keeps change excluded
+
+- **GIVEN** `openspec/changes/fix-auth/REJECTED.md` still exists on the base branch
+- **WHEN** `ChangesRefreshed` fires
+- **THEN** `fix-auth` is NOT in the active change list
+- **AND** the runtime does NOT clear `TerminalState::Rejected`

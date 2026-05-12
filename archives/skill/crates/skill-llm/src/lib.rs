@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 NeuroSkill.com
+//! `skill-llm` — LLM inference engine extracted from the NeuroSkill monolith.
+//!
+//! This crate contains the core LLM logic:
+//!
+//! - **config** — `LlmConfig` (LLM server config), re-exports `LlmToolConfig`
+//! - **engine** — actor-based inference, HTTP router, tool orchestration
+//! - **catalog** — model catalog management
+//! - **chat_store** — SQLite chat history persistence
+//! - **tools** — re-export of `skill_tools::parse` (tool-call extraction, parsing, validation)
+//! - **event** — event emitter trait (abstracts tauri::AppHandle)
+
+pub mod config;
+pub mod error;
+pub mod event;
+pub mod log;
+
+/// Log a message from the LLM subsystem.
+///
+/// ```ignore
+/// llm_log!("llm", "[info] model loaded: {name}");
+/// llm_log!("chat_store", "save_message OK: session={id}");
+/// ```
+///
+/// Short-circuits (no `format!` allocation) when logging is disabled.
+#[allow(unused_macros)]
+macro_rules! llm_log {
+    ($tag:expr, $($arg:tt)*) => {
+        if $crate::log::log_enabled() {
+            $crate::log::write_log($tag, &format!($($arg)*));
+        }
+    };
+}
+
+pub mod catalog;
+pub mod chat_store;
+
+/// Re-export the `skill_tools::parse` module as `tools` for backwards compatibility.
+/// All tool-call parsing, extraction, validation, and injection lives in `skill-tools`.
+pub use skill_tools::parse as tools;
+
+#[cfg(feature = "llm")]
+pub mod engine;
+#[cfg(feature = "llm")]
+pub mod handlers;
+
+// Re-export the most-used types at crate root for convenience.
+pub use config::{LlmConfig, LlmToolConfig, ToolExecutionMode};
+pub use event::{LlmEventEmitter, NoopEmitter};
+
+#[cfg(feature = "llm")]
+pub use engine::{
+    cell_status, extract_images_from_messages, init, new_log_buffer, new_state_cell, push_log,
+    run_chat_with_builtin_tools, shutdown_cell, AfterToolCallFn, BeforeToolCallFn, GenParams, InferRequest, InferToken,
+    LlmLogBuffer, LlmLogEntry, LlmLogFile, LlmServerState, LlmStateCell, LlmStatus, ToolEvent,
+};
+pub use error::{ChatStoreError, DownloadError, EngineError};
+#[cfg(feature = "llm")]
+pub use handlers::router;

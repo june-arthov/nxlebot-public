@@ -1,0 +1,287 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" xsi="http://www.w3.org/2001/XMLSchema-instance" engine="UnityEngine.UIElements" editor="UnityEditor.UIElements" noNamespaceSchemaLocation="../../../../../../UIElementsSchema/UIElements.xsd" editor-extension-mode="True">
+    <Style src="project://database/Packages/io.spatial.unitysdk/Editor/Scripts/GUI/ConfigWindow/SpatialSDKConfigWindowStyles.uss?fileID=7433441132597879392&amp;guid=2065a753bc3834755a8d2b33b9f9de01&amp;type=3#SpatialSDKConfigWindowStyles" />
+    <Style src="project://database/Packages/io.spatial.unitysdk/Editor/Scripts/GUI/ConfigWindow/SpatialValidatorWindow.uss?fileID=7433441132597879392&amp;guid=f74bc96d71d244e49b30c2df4cd0e64a&amp;type=3#SpatialValidatorWindow" />
+    <ui:VisualElement style="min-width: auto; min-height: auto; flex-grow: 1;">
+        <ui:VisualElement name="Header" style="flex-direction: row; justify-content: center; flex-wrap: wrap; padding-left: 0; padding-right: 0; padding-top: 0; padding-bottom: 0; flex-shrink: 0; margin-bottom: 16px; margin-left: 0; margin-right: 0; align-items: center;">
+            <ui:VisualElement name="LogoGroup" style="border-left-color: rgb(255, 255, 255); border-right-color: rgb(255, 255, 255); border-top-color: rgb(255, 255, 255); border-bottom-color: rgb(255, 255, 255); border-left-width: 0; border-right-width: 0; border-top-width: 0; border-bottom-width: 0; border-top-left-radius: 8px; border-bottom-left-radius: 8px; border-top-right-radius: 8px; border-bottom-right-radius: 8px; margin-left: 0; margin-right: 0; margin-top: 0; margin-bottom: 0; align-items: center; flex-direction: row; justify-content: center; flex-shrink: 1; padding-top: 8px;">
+                <ui:VisualElement class="logo" />
+                <ui:Label text="Creator&#10;Toolkit" display-tooltip-when-elided="true" class="logotext" />
+            </ui:VisualElement>
+            <ui:VisualElement name="Filler" style="flex-grow: 1; height: 0;" />
+            <ui:Button text="Account" display-tooltip-when-elided="true" name="accountButton" class="tabButton tabButtonSelected" style="margin-left: 0;" />
+            <ui:Button text="Config" display-tooltip-when-elided="true" name="configButton" class="tabButton" />
+            <ui:Button text="Issues" display-tooltip-when-elided="true" name="issuesButton" class="tabButton" />
+            <ui:Button text="Utilities" display-tooltip-when-elided="true" name="utilitiesButton" class="tabButton" style="display: flex;" />
+            <ui:Button text="Help" display-tooltip-when-elided="true" name="helpButton" class="tabButton" />
+        </ui:VisualElement>
+        <ui:ScrollView>
+            <ui:VisualElement name="account" style="align-items: center; display: none; opacity: 1; flex-shrink: 0; justify-content: space-around;">
+                <ui:VisualElement name="notLoggedInBlock" class="block_white block_red block_base">
+                    <ui:Label text="Not Logged In" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                    <ui:Label text="Follow the steps below to link your Spatial account with Unity." display-tooltip-when-elided="true" name="Text" class="blockText" />
+                </ui:VisualElement>
+                <ui:VisualElement name="loggingInBlock" class="block_white block_base block_yellow">
+                    <ui:Label text="Logging In..." display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                    <ui:Label text="Hang tight!" display-tooltip-when-elided="true" name="Text" class="blockText" />
+                </ui:VisualElement>
+                <ui:VisualElement name="loggedInBlock" class="block_white block_base block_green" style="flex-direction: row; flex-grow: 1; flex-shrink: 1;">
+                    <ui:VisualElement name="LeftLayout" style="flex-grow: 1;">
+                        <ui:Label text="Logged In" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                        <ui:Label text="as Username (username@email.com)" display-tooltip-when-elided="true" name="loggedInAsText" class="blockText" />
+                    </ui:VisualElement>
+                    <ui:VisualElement name="RightLayout">
+                        <ui:VisualElement name="ButtonGroup" style="min-height: auto; min-width: auto; display: flex; justify-content: flex-end; flex-direction: row;">
+                            <ui:Button text="Log Out" display-tooltip-when-elided="true" name="logout" class="blockButton" />
+                        </ui:VisualElement>
+                    </ui:VisualElement>
+                </ui:VisualElement>
+                <ui:VisualElement name="GetTokenBlock" class="block_white block_base">
+                    <ui:Label text="1st" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                    <ui:Label text="Copy your access token from your profile by clicking the button below and logging into your Spatial account." display-tooltip-when-elided="true" name="Text" class="blockText" />
+                    <ui:VisualElement name="ButtonGroup" style="flex-direction: row; min-height: auto; min-width: auto; margin-top: 10px;">
+                        <ui:Button text="Get Login Token" display-tooltip-when-elided="true" name="getToken" class="blockButton" />
+                        <ui:VisualElement name="Filler" style="flex-grow: 1;" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+                <ui:VisualElement name="WarningBlock" class="block_white block_base block_yellow">
+                    <ui:Label text="No sharing!" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                    <ui:Label text="Your access token should not be shared with anybody. Spatial will never ask you for this token." display-tooltip-when-elided="true" name="Text" class="blockText" />
+                </ui:VisualElement>
+                <ui:VisualElement name="PasteTokenBlock" class="block_white block_base">
+                    <ui:Label text="2nd" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                    <ui:Label text="Paste your access token into Unity by pressing the button below." display-tooltip-when-elided="true" name="Text" class="blockText" />
+                    <ui:VisualElement name="ButtonGroup" style="flex-direction: row; min-height: auto; min-width: auto; margin-top: 10px;">
+                        <ui:Button text="Paste Login Token" display-tooltip-when-elided="true" name="pasteToken" class="blockButton" />
+                        <ui:VisualElement name="Filler" style="flex-grow: 1;" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+            </ui:VisualElement>
+            <ui:VisualElement name="config" style="display: none;">
+                <ui:VisualElement name="configNull" class="block_white block_red block_base">
+                    <ui:Label text="Config file not found" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                    <ui:Label text="Unable to locate a config in this project. Click the button below to get started!" display-tooltip-when-elided="true" name="Text" class="blockText" />
+                    <ui:VisualElement name="ButtonGroup" style="flex-direction: row; min-height: auto; min-width: auto; margin-top: 10px; display: flex;">
+                        <ui:Button text="Create Project Config" display-tooltip-when-elided="true" name="newConfigButton" class="blockButton blockButton_red" />
+                        <ui:VisualElement name="Filler" style="flex-grow: 1;" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+                <ui:VisualElement name="notLoggedInBlock" class="block_white block_base block_red" style="flex-direction: row; flex-grow: 1; flex-shrink: 1;">
+                    <ui:VisualElement name="LeftLayout" style="flex-grow: 1;">
+                        <ui:Label text="Not Logged In" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                        <ui:Label text="You need to log into your Spatial account in order to publish your package." display-tooltip-when-elided="true" name="Text" class="blockText" />
+                    </ui:VisualElement>
+                    <ui:VisualElement name="RightLayout" style="justify-content: center;">
+                        <ui:Button text="Go" display-tooltip-when-elided="true" name="accountButton" class="blockButton" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+                <ui:VisualElement name="projectConfig" class="block_white block_base">
+                    <ui:VisualElement name="header" style="flex-direction: row; margin-bottom: 8px;">
+                        <ui:Label text="Project Configuration" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                        <ui:VisualElement name="Filler" style="flex-grow: 1; height: 0;" />
+                        <ui:Button text="Open Spatial Studio" display-tooltip-when-elided="true" name="openStudio" class="blockButton blockButton_small" />
+                    </ui:VisualElement>
+                    <ui:VisualElement name="teamSelector" style="flex-direction: row; min-height: auto; min-width: auto; margin-top: 0; margin-bottom: 3px;">
+                        <ui:DropdownField label="Default Team" index="-1" choices="System.Collections.Generic.List`1[System.String]" name="defaultTeamDropDown" style="margin-left: 0; margin-right: 5px; margin-top: 0; margin-bottom: 0;" />
+                        <ui:Button text="Refresh" display-tooltip-when-elided="true" name="refreshTeamsButton" enable-rich-text="false" tooltip="Fetch all the teams for your account" style="height: 22px; margin-left: 0; margin-right: 0; margin-top: 0; margin-bottom: 0; width: auto; min-width: 60px;" />
+                    </ui:VisualElement>
+                    <ui:VisualElement name="worldSelector" style="flex-direction: row; min-height: auto; min-width: auto; margin-top: 0; margin-bottom: 3px;">
+                        <ui:DropdownField label="Default World" index="-1" choices="System.Collections.Generic.List`1[System.String]" name="defaultWorldDropDown" style="margin-left: 0; margin-right: 5px; margin-top: 0; margin-bottom: 0;" />
+                        <ui:Button text="Refresh" display-tooltip-when-elided="true" name="refreshWorldsButton" enable-rich-text="false" tooltip="Fetch all the worlds for your account" style="height: 22px; margin-left: 0; margin-right: 5px; margin-top: 0; margin-bottom: 0; width: auto; min-width: 60px;" />
+                        <ui:Button text="Create New World" display-tooltip-when-elided="true" name="createWorldsButton" tooltip="Create a new world and assign it to this project" style="height: 22px; margin-left: 0; margin-right: 0; margin-top: 0; margin-bottom: 0; width: auto; min-width: 60px;" />
+                    </ui:VisualElement>
+                    <ui:VisualElement name="create" style="flex-direction: row; min-height: auto; min-width: auto; margin-top: 0; margin-bottom: 3px;">
+                        <uie:EnumField label="Create New" type="SpatialSys.UnitySDK.PackageType, SpatialSys.UnitySDK" value="Space" name="createPackageTypeDropdown" style="margin-left: 0; margin-right: 5px; margin-top: 0; margin-bottom: 0;" />
+                        <ui:Button text="Create" display-tooltip-when-elided="true" name="createPackageButton" style="height: 22px; margin-left: 0; margin-right: 0; margin-top: 0; margin-bottom: 0; width: auto; min-width: 60px;" />
+                    </ui:VisualElement>
+                    <ui:DropdownField label="Active Package" index="-1" name="packageConfigDropDown" binding-path="_currentPackageIndex" style="height: 22px; margin-top: 0; width: auto; margin-left: 0; margin-bottom: 0; margin-right: 0;" />
+                </ui:VisualElement>
+                <ui:VisualElement name="packageConfig" class="block_white block_base">
+                    <ui:VisualElement name="header" style="flex-direction: row; margin-bottom: 8px;">
+                        <ui:Label text="Active Package" display-tooltip-when-elided="true" name="nameHeader" class="blockTitle" />
+                        <ui:VisualElement name="Filler" style="flex-grow: 1; height: 0;" />
+                        <ui:Button text="Publish" display-tooltip-when-elided="true" name="publishPackageButton" class="blockButton blockButton_small" style="margin-right: 10px;" />
+                        <ui:Button text="Delete" display-tooltip-when-elided="true" name="deletePackageButton" class="blockButton blockButton_red blockButton_small" />
+                    </ui:VisualElement>
+                    <ui:VisualElement name="packageType" style="flex-direction: row; margin-left: 3px; margin-right: 3px; margin-top: 1px; margin-bottom: 1px;">
+                        <ui:Label text="Type" display-tooltip-when-elided="true" enable-rich-text="false" class="unity-base-field__label" />
+                        <ui:Label text="SpaceTemplate" display-tooltip-when-elided="true" enable-rich-text="false" name="packageTypeValue" class="mutedText" />
+                    </ui:VisualElement>
+                    <ui:TextField picking-mode="Ignore" label="Name" password="false" multiline="false" binding-path="packageName" name="name" class="textField" />
+                    <ui:VisualElement name="packageSKUEmpty" style="flex-direction: row; margin-left: 3px; margin-right: 3px; margin-top: 1px; margin-bottom: 1px;">
+                        <ui:Label text="SKU" display-tooltip-when-elided="true" enable-rich-text="false" class="unity-base-field__label" />
+                        <ui:Label text="Will be assigned when package is first published" display-tooltip-when-elided="true" enable-rich-text="false" name="skuValue" class="mutedText" />
+                    </ui:VisualElement>
+                    <ui:VisualElement name="packageSKU" style="flex-direction: row; margin-left: 3px; margin-right: 3px; margin-top: 1px; margin-bottom: 1px; display: none;">
+                        <ui:Label text="SKU" display-tooltip-when-elided="true" enable-rich-text="false" class="unity-base-field__label" />
+                        <ui:Label display-tooltip-when-elided="true" enable-rich-text="false" name="skuValue" binding-path="sku" class="mutedText" style="flex-grow: 1;" />
+                        <ui:Button text="Copy" display-tooltip-when-elided="true" name="skuCopyButton" style="margin-right: 0; margin-top: 0; margin-bottom: 0;" />
+                    </ui:VisualElement>
+                    <ui:VisualElement name="spaceConfig" style="margin-top: 10px;">
+                        <ui:VisualElement style="flex-direction: row;">
+                            <uie:PropertyField binding-path="scene" label="Scene" name="scene" style="flex-grow: 1;" />
+                            <ui:Button text="Create New Scene" display-tooltip-when-elided="true" name="createDefaultSceneButton" tooltip="Create a new scene asset with all the Spatial essentials already set up." focusable="false" style="flex-shrink: 1; flex-grow: 0;" />
+                        </ui:VisualElement>
+                        <uie:PropertyField binding-path="thumbnail" label="Thumbnail" name="thumbnail" />
+                        <ui:VisualElement style="flex-direction: row;">
+                            <uie:PropertyField binding-path="csharpAssembly" label="C# Assembly" name="csharpAssembly" style="flex-grow: 1;" />
+                            <ui:Button text="Create New Assembly" display-tooltip-when-elided="true" name="createAssemblyButton" tooltip="Create a new assembly definition with the SpatialSDK assembly referenced." focusable="false" style="flex-shrink: 1; flex-grow: 0;" />
+                        </ui:VisualElement>
+                        <uie:PropertyField binding-path="networkPrefabs" label="Network Prefabs" name="networkPrefabs" />
+                        <uie:PropertyField binding-path="embeddedPackageAssets" label="Embedded Packages" name="embeddedPackageAssets" />
+                        <ui:Label text="Settings" display-tooltip-when-elided="true" name="settingsLabel" style="-unity-font-style: bold; margin-top: 15px; margin-bottom: 4px;" />
+                        <ui:VisualElement name="settingsContainer" style="padding-left: 5px;">
+                            <uie:PropertyField binding-path="settings.serverInstancingEnabled" name="serverInstancingEnabled" />
+                            <uie:PropertyField binding-path="settings.serverCapacitySetting" name="serverCapacitySetting" style="flex-direction: column;" />
+                            <uie:PropertyField binding-path="settings.serverInstanceCapacity" name="serverInstanceCapacity" />
+                        </ui:VisualElement>
+                    </ui:VisualElement>
+                    <ui:VisualElement name="spaceTemplateConfig" style="margin-top: 10px;">
+                        <uie:PropertyField binding-path="variants" label="Template Variants" name="variants" />
+                    </ui:VisualElement>
+                    <ui:VisualElement name="avatarConfig" style="margin-top: 10px;">
+                        <uie:PropertyField binding-path="prefab" label="Prefab" name="prefab" />
+                        <uie:PropertyField binding-path="usageContext" label="Usage Context" name="usageContext" />
+                        <uie:PropertyField binding-path="category" label="Category" name="category" />
+                        <uie:PropertyField binding-path="thumbnail" label="Thumbnail" name="thumbnail" />
+                    </ui:VisualElement>
+                    <ui:VisualElement name="avatarAnimationConfig" style="margin-top: 10px;">
+                        <uie:PropertyField binding-path="prefab" label="Prefab" name="prefab" />
+                        <uie:PropertyField binding-path="thumbnail" label="Thumbnail" name="thumbnail" />
+                    </ui:VisualElement>
+                    <ui:VisualElement name="prefabObjectConfig" style="margin-top: 10px; display: flex;">
+                        <uie:PropertyField binding-path="prefab" label="Prefab" name="prefab" />
+                        <uie:PropertyField binding-path="thumbnail" label="Thumbnail" name="thumbnail" />
+                    </ui:VisualElement>
+                    <ui:VisualElement name="avatarAttachmentConfig" style="margin-top: 10px; display: flex;">
+                        <uie:PropertyField binding-path="prefab" label="Prefab" name="prefab" />
+                        <uie:PropertyField binding-path="usageContext" label="Usage Context" name="usageContext" />
+                        <uie:PropertyField binding-path="thumbnail" label="Thumbnail" name="thumbnail" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+            </ui:VisualElement>
+            <ui:VisualElement name="issues" style="display: flex; flex-grow: 1; flex-shrink: 0; height: 100%;">
+                <ui:VisualElement name="issuesActivePackage" class="block_white block_base">
+                    <ui:Label text="Testing Configuration" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                    <ui:Label text="Select a package to test for below" display-tooltip-when-elided="true" name="Text" class="blockText" style="margin-bottom: 8px;" />
+                    <ui:DropdownField label="Active Package" index="-1" name="issuesPackageDropDown" binding-path="_currentPackageIndex" style="height: 22px; margin-top: 0; width: auto; margin-left: 0; margin-bottom: 0; margin-right: 0;" />
+                </ui:VisualElement>
+                <ui:VisualElement name="issuesCountBlock" class="block_white block_red block_base">
+                    <ui:Label text="0 errors" display-tooltip-when-elided="true" name="issuesCountTitle" class="blockTitle" />
+                    <ui:Label text="You can not upload your creation to the sandbox or publish until the errors are resolved." display-tooltip-when-elided="true" name="issuesCountDescription" class="blockText" />
+                    <ui:VisualElement name="ButtonGroup" style="flex-direction: row; min-height: auto; min-width: auto; margin-top: 10px; display: flex;">
+                        <ui:Button text="Refresh" display-tooltip-when-elided="true" name="refreshButton" class="blockButton" />
+                        <ui:VisualElement name="Filler" style="flex-grow: 1;" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+                <ui:VisualElement name="issuesScrollBlock" class="block_white block_base">
+                    <ui:ScrollView name="issuesScroll" style="height: auto; min-height: 0; max-height: 250px;" />
+                </ui:VisualElement>
+                <ui:VisualElement name="selectedIssueBlock" class="block_white block_red block_base">
+                    <ui:ScrollView style="height: auto; max-height: 250px;">
+                        <ui:Label text="Error Name" display-tooltip-when-elided="true" name="title" class="blockTitle" />
+                        <ui:Label text="Error description" display-tooltip-when-elided="true" name="description" class="blockText" style="font-size: 14px; white-space: normal;" />
+                        <ui:VisualElement name="ButtonGroup" style="flex-direction: row; min-height: auto; min-width: auto; margin-top: 10px; display: none;">
+                            <ui:Button text="Refresh" display-tooltip-when-elided="true" name="refreshButton" class="blockButton blockButton_red" />
+                            <ui:VisualElement name="Filler" style="flex-grow: 1;" />
+                        </ui:VisualElement>
+                    </ui:ScrollView>
+                </ui:VisualElement>
+                <ui:VisualElement name="autoFixBlock" class="block_white block_base block_green">
+                    <ui:Label text="Auto Fix Available" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                    <ui:Label text="Description of the fix here." display-tooltip-when-elided="true" name="autoFixDescription" class="blockText" />
+                    <ui:VisualElement name="ButtonGroup" style="flex-direction: row; min-height: auto; min-width: auto; margin-top: 10px; display: flex;">
+                        <ui:Button text="Execute" display-tooltip-when-elided="true" name="autoFixButton" class="blockButton blockButton_green" />
+                        <ui:VisualElement name="Filler" style="flex-grow: 1;" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+                <ui:VisualElement name="selectObjectBlock" class="block_white block_base">
+                    <ui:Label text="Target Object" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                    <ui:Label text="Target Name" display-tooltip-when-elided="true" name="targetObjectName" class="blockText" />
+                    <ui:VisualElement name="ButtonGroup" style="flex-direction: row; min-height: auto; min-width: auto; margin-top: 10px; display: flex;">
+                        <ui:Button text="Select" display-tooltip-when-elided="true" name="selectObjectButton" class="blockButton" />
+                        <ui:VisualElement name="Filler" style="flex-grow: 1;" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+                <ui:VisualElement name="openSceneBlock" class="block_white block_base">
+                    <ui:Label text="Target Scene" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                    <ui:Label text="name of taget here" display-tooltip-when-elided="true" name="targetSceneName" class="blockText" />
+                    <ui:VisualElement name="ButtonGroup" style="flex-direction: row; min-height: auto; min-width: auto; margin-top: 10px; display: flex;">
+                        <ui:Button text="Open" display-tooltip-when-elided="true" name="openSceneButton" class="blockButton" />
+                        <ui:VisualElement name="Filler" style="flex-grow: 1;" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+            </ui:VisualElement>
+            <ui:VisualElement name="utilities" style="align-items: center; display: none;">
+                <ui:VisualElement name="AddressablesBlock" class="block_white block_base">
+                    <ui:Label text="Addressables" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                    <ui:Label display-tooltip-when-elided="true" name="Text" text="All utilities related to Unity&apos;s Addressables package" class="blockText" style="-unity-paragraph-spacing: 32px;" />
+                    <ui:VisualElement name="ButtonGroup" style="flex-direction: row; min-height: auto; min-width: auto; margin-top: 10px; display: flex;">
+                        <ui:Button text="Initialize for Project" name="initAddressables" tooltip="Initializes Addressable configuration assets for project-wide use. This will enable building Addressables when uploading to sandbox or publishing your package." class="blockButton" style="margin-right: 12px;" />
+                        <ui:VisualElement name="Filler" style="flex-grow: 1;" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+                <ui:VisualElement name="OptimizationBlock" class="block_white block_base">
+                    <ui:Label text="Project Optimization" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                    <ui:Label display-tooltip-when-elided="true" name="Text" text="Optimize all assets and resources by executing all tools below." class="blockText" style="-unity-paragraph-spacing: 32px;" />
+                    <ui:VisualElement name="ButtonGroup" style="flex-direction: row; min-height: auto; min-width: auto; margin-top: 10px; display: flex;">
+                        <ui:Button text="Optimize All" display-tooltip-when-elided="true" name="optimizeAll" class="blockButton" style="margin-right: 12px;" />
+                        <ui:VisualElement name="Filler" style="flex-grow: 1;" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+                <ui:VisualElement name="OptimizeAssets" class="block_white block_base">
+                    <ui:Label text="Optimize Assets" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                    <ui:Label text="By optimizing the compression settings of textures, models and audio assets, you can effectively decrease the loading time of rooms and minimize the risk of app crashes." display-tooltip-when-elided="true" name="Text" class="blockText" style="-unity-paragraph-spacing: 32px;" />
+                    <ui:VisualElement name="ButtonGroup" style="flex-direction: row; min-height: auto; min-width: auto; margin-top: 10px; display: flex; margin-bottom: 10px;">
+                        <ui:Button text="Optimize Assets" display-tooltip-when-elided="true" name="optimizeAssets" class="blockButton" style="margin-right: 12px;" />
+                        <ui:Button text="Optimize Assets (Folder)" display-tooltip-when-elided="true" name="optimizeAssetsFolder" class="blockButton" />
+                        <ui:VisualElement name="Filler" style="flex-grow: 1;" />
+                    </ui:VisualElement>
+                    <ui:Toggle label="Disable Asset Processing (Not Recommended)" value="false" tooltip="Spatial Creator Toolkit optimizes assets by applying import settings that you may not want. Enabling this checkbox will turn off the automatic processing." name="disableAssetProcessing" style="display: flex;" />
+                </ui:VisualElement>
+                <ui:VisualElement name="OptimizeTextures" class="block_white block_base">
+                    <ui:Label text="Texture Optimizer" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                    <ui:Label text="Convert textures to JPG for non-transparent textures or PNG for transparent textures to reduce the package size.\nThis helps keep the package size under our 500 MB limit." display-tooltip-when-elided="true" name="Text" class="blockText" style="-unity-paragraph-spacing: 32px;" />
+                    <ui:VisualElement name="ButtonGroup" style="flex-direction: row; min-height: auto; min-width: auto; margin-top: 10px; display: flex;">
+                        <ui:Button text="Optimize Textures" display-tooltip-when-elided="true" name="optimizeTextures" class="blockButton" style="margin-right: 12px;" />
+                        <ui:Button text="Textures Optimizer (Window)" display-tooltip-when-elided="true" name="optimizeTexturesWindow" class="blockButton" />
+                        <ui:VisualElement name="Filler" style="flex-grow: 1;" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+            </ui:VisualElement>
+            <ui:VisualElement name="help" style="align-items: center; display: none;">
+                <ui:VisualElement name="DocsBlock" class="block_white block_base">
+                    <ui:Label text="Documentation" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                    <ui:Label text="Read guides on how to set up your editor, use components, and publish to Spatial." display-tooltip-when-elided="true" name="Text" class="blockText" />
+                    <ui:VisualElement name="ButtonGroup" style="flex-direction: row; min-height: auto; min-width: auto; margin-top: 10px; display: flex;">
+                        <ui:Button text="Open" display-tooltip-when-elided="true" name="gotoDocumentation" class="blockButton" />
+                        <ui:VisualElement name="Filler" style="flex-grow: 1;" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+                <ui:VisualElement name="DiscordBlock" class="block_white block_base">
+                    <ui:Label text="Discord" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                    <ui:Label text="Share your space with the community!" display-tooltip-when-elided="true" name="Text" class="blockText" />
+                    <ui:VisualElement name="ButtonGroup" style="flex-direction: row; min-height: auto; min-width: auto; margin-top: 10px; display: flex;">
+                        <ui:Button text="Open" display-tooltip-when-elided="true" name="gotoDiscord" class="blockButton" />
+                        <ui:VisualElement name="Filler" style="flex-grow: 1;" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+                <ui:VisualElement name="ForumBlock" class="block_white block_base">
+                    <ui:Label text="Discussion Forum" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                    <ui:Label text="Ask for help and read discussions!" display-tooltip-when-elided="true" name="Text" class="blockText" />
+                    <ui:VisualElement name="ButtonGroup" style="flex-direction: row; min-height: auto; min-width: auto; margin-top: 10px; display: flex;">
+                        <ui:Button text="Open" display-tooltip-when-elided="true" name="gotoForum" class="blockButton" />
+                        <ui:VisualElement name="Filler" style="flex-grow: 1;" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+                <ui:VisualElement name="SupportBlock" class="block_white block_base">
+                    <ui:Label text="Spatial Support" display-tooltip-when-elided="true" name="Header" class="blockTitle" />
+                    <ui:Label text="Get help with using Spatial." display-tooltip-when-elided="true" name="Text" class="blockText" />
+                    <ui:VisualElement name="ButtonGroup" style="flex-direction: row; min-height: auto; min-width: auto; margin-top: 10px; display: flex;">
+                        <ui:Button text="Open" display-tooltip-when-elided="true" name="gotoSupport" class="blockButton" />
+                        <ui:VisualElement name="Filler" style="flex-grow: 1;" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+            </ui:VisualElement>
+        </ui:ScrollView>
+    </ui:VisualElement>
+</ui:UXML>

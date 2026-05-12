@@ -1,0 +1,5 @@
+snapshot: ghc-9.10.3
+ghc-options:
+  "*": -DFOO
+  ghc-options: -DBAR
+rebuild-ghc-options: true

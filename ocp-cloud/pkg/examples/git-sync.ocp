@@ -1,0 +1,14 @@
+# git-sync.ocp — Pull semua repo di workspace
+# Cron: tiap 6 jam
+
+echo "============================"
+echo " GIT SYNC"
+echo "============================"
+
+echo ""
+echo "[OC+ Cloud]"
+run "git -C /home/nxelleai/.openclaw/workspace/ocp-cloud pull"
+
+echo ""
+echo "[Virtual Office]"
+run "git -C /home/nxelleai/.openclaw/workspace/projects/virtual-office-game pull"

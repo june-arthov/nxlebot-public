@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+  <!-- ── Bonjour / local network ────────────────────────────────────────── -->
+
+  <!--
+    Declare every Bonjour service type this app advertises or browses.
+    macOS 12+ silently drops mDNS traffic for undeclared types.
+    Must match the service type registered at runtime:
+      ws_server.rs  →  format!("_{}{}", app_name, MDNS_SERVICE_SUFFIX)
+      runtime value →  _skill._tcp.local.
+      plist form    →  _skill._tcp   (no .local. — macOS convention)
+    If the app is renamed, update this array to match.
+  -->
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_skill._tcp</string>
+  </array>
+
+  <!--
+    Shown in the one-time "wants to find devices on your local network"
+    permission dialog (macOS 12+).  Required; blank string causes rejection
+    on App Store review and silent denial in hardened builds.
+  -->
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Skill streams live EEG data to apps on your local network over WebSocket, and announces itself via Bonjour so clients can discover it automatically.</string>
+
+  <!-- ── Bluetooth ───────────────────────────────────────────────────────── -->
+
+  <!--
+    macOS 12+ requires a usage string for any app that uses Core Bluetooth.
+    Without it the BLE stack silently fails to scan on Monterey and later.
+  -->
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>Skill connects to your Muse EEG headset over Bluetooth Low Energy to stream brainwave data.</string>
+
+  <!-- ── Notifications ──────────────────────────────────────────────────── -->
+
+  <!--
+    macOS requires NSUserNotificationsUsageDescription for apps that post
+    UNUserNotificationCenter alerts (macOS 13+).  Without it the permission
+    dialog is never shown and notifications silently fail.
+  -->
+  <key>NSUserNotificationsUsageDescription</key>
+  <string>Skill sends notifications for important events such as device connection changes, low battery warnings, and calibration completion.</string>
+
+  <!-- ── Calendar ───────────────────────────────────────────────────────── -->
+
+  <!--
+    Required for EventKit access on macOS 10.14+.  Without this key the
+    system silently denies calendar access and no permission dialog is shown.
+  -->
+  <!--
+    NSCalendarsUsageDescription    — required for the legacy API (macOS 10.14–13).
+    NSCalendarsFullAccessUsageDescription — required for requestFullAccessToEventsWithCompletion:
+                                           (macOS 14+).  Without this key the full-access request
+                                           silently fails on Sonoma and later.
+  -->
+  <key>NSCalendarsUsageDescription</key>
+  <string>Skill reads your calendar events to correlate scheduled activities with your EEG focus and wellbeing data.</string>
+
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>Skill reads your calendar events to correlate scheduled activities with your EEG focus and wellbeing data.</string>
+
+  <!-- ── Location ──────────────────────────────────────────────────────────────── -->
+
+  <!--
+    Required for CoreLocation on macOS 10.14+.  Without this key the
+    system silently denies location access and no permission dialog
+    is shown.  The app falls back to IP geolocation if denied.
+  -->
+  <key>NSLocationWhenInUseUsageDescription</key>
+  <string>Skill uses your location to provide geographic context for EEG sessions and to enrich LLM responses with local information such as timezone, city, and weather.</string>
+
+</dict>
+</plist>

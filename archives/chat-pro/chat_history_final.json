@@ -1,0 +1,16 @@
+[
+  {
+    "id": "e278b258-f549-42d0-ae4a-3f57ebf5a1f3",
+    "text": "boy",
+    "is_user": true,
+    "platform": "web",
+    "time": "2026-04-07T13:26:26.036521"
+  },
+  {
+    "id": "58680c73-c593-4940-9a22-02e952a569b2",
+    "text": "Menarik!",
+    "is_user": false,
+    "platform": "web",
+    "time": "2026-04-07T13:26:26.036545"
+  }
+]

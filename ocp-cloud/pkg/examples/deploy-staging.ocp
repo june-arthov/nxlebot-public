@@ -1,0 +1,40 @@
+# deploy-staging.ocp — Build and Deploy to Staging
+# Usage: set APP, VERSION, TAG, then run
+
+set APP = "myapp"
+set VERSION = 3
+set TAG = "v$VERSION"
+set REGISTRY = "registry.example.com"
+set SERVER = "deploy@staging.example.com"
+
+echo "=== Deploying $APP:$TAG to staging ==="
+
+echo "[1/5] Running tests..."
+parallel {
+    run "npm run lint"
+    run "npm run typecheck"
+} {
+    run "npm test -- --coverage"
+}
+
+echo "[2/5] Building Docker image..."
+run "docker build -t $REGISTRY/$APP:$TAG ."
+run "docker tag $REGISTRY/$APP:$TAG $REGISTRY/$APP:latest"
+
+echo "[3/5] Pushing to registry..."
+run "docker push $REGISTRY/$APP:$TAG"
+run "docker push $REGISTRY/$APP:latest"
+
+echo "[4/5] Deploying to server..."
+run "ssh $SERVER 'docker pull $REGISTRY/$APP:$TAG && docker-compose up -d'"
+
+echo "[5/5] Health check..."
+try {
+    run "sleep 5 && curl -sf https://staging.example.com/health"
+    echo "Staging is healthy ✅"
+} catch {
+    echo "Health check failed ❌ — rolling back..."
+    run "ssh $SERVER 'docker-compose down && docker-compose up -d --no-deps app'"
+}
+
+echo "Deploy complete! 🚀"

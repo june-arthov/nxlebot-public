@@ -1,0 +1,8 @@
+[gd_resource type="Environment" load_steps=2 format=3 uid="uid://b8xn7y3v0l5k5"]
+
+[sub_resource type="ProceduralSky" id="ProceduralSky_1"]
+sky_top_color = Color("#87CEEB")
+sky_horizon_color = Color("#FFE4B5")
+
+[sub_resource type="WorldEnvironment" id="WorldEnvironment_1"]
+environment = SubResource("ProceduralSky_1")

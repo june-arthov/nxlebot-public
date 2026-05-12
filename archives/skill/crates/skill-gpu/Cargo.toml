@@ -1,0 +1,16 @@
+[package]
+name = "skill-gpu"
+version = "0.0.1"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Cross-platform GPU utilisation and memory stats (macOS IOKit, Linux/Windows via llmfit-core)"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+llmfit-core = "0.8.4"
+sysinfo    = "0.38"
+libc       = "0.2"
+
+[lints]
+workspace = true

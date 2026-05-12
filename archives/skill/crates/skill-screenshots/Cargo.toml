@@ -1,0 +1,53 @@
+[package]
+name = "skill-screenshots"
+version = "0.0.1"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Screenshot capture + vision embedding for NeuroSkill"
+
+[dependencies]
+skill-constants = { path = "../skill-constants" }
+skill-data      = { path = "../skill-data" }
+skill-settings  = { path = "../skill-settings" }
+serde           = { version = "1", features = ["derive"] }
+serde_json      = "1"
+base64          = { workspace = true }
+image           = { version = "0.25", default-features = false, features = ["png", "webp", "jpeg", "gif"] }
+gif             = "0.14"
+fast-hnsw          = "1.0.1"
+crossbeam-channel  = "0.5"
+ocrs            = "0.12.1"
+rten            = "0.24.0"
+chrono          = { version = "0.4", default-features = false, features = ["clock", "std"] }
+ureq            = { version = "3", features = ["native-tls"] }
+
+[[bin]]
+name = "image_encode_bench"
+path = "src/bin/image_encode_bench.rs"
+
+[target.'cfg(target_os = "macos")'.dependencies.ort]
+version = "=2.0.0-rc.11"
+default-features = false
+features = ["coreml"]
+
+[target.'cfg(not(target_os = "macos"))'.dependencies.ort]
+version = "=2.0.0-rc.11"
+default-features = false
+features = ["download-binaries", "tls-native"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+skill-vision = { path = "../skill-vision" }
+fastembed = { version = "5.11.0", features = ["metal"] }
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplication"] }
+
+[features]
+default = ["capture"]
+capture = ["xcap"]
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+fastembed = { version = "5.11.0", features = ["ort-download-binaries-native-tls"] }
+xcap = { version = "0.9", default-features = false, optional = true }
+
+[lints]
+workspace = true

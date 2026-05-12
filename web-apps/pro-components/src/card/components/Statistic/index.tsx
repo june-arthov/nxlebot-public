@@ -1,0 +1,129 @@
+import { QuestionCircleOutlined } from '@ant-design/icons';
+import type { StatisticProps as AntdStatisticProps, BadgeProps } from 'antd';
+import {
+  Statistic as AntdStatistic,
+  Badge,
+  ConfigProvider,
+  Tooltip,
+} from 'antd';
+import { clsx } from 'clsx';
+import React, { useContext } from 'react';
+import { useStyle } from './style';
+
+export interface StatisticProps extends AntdStatisticProps {
+  /**
+   * 样式
+   *
+   * @ignore
+   */
+  style?: React.CSSProperties;
+  /**
+   * ClassName
+   *
+   * @ignore
+   */
+  className?: string;
+  /** 描述性标签 */
+  description?: React.ReactNode;
+  /** 标题提示 */
+  tip?: React.ReactNode;
+  /** 当前项显示的状态 */
+  status?: BadgeProps['status'];
+  /** Icon 图标 */
+  icon?: React.ReactNode;
+  /** Layout 布局 */
+  layout?: 'horizontal' | 'vertical' | 'inline';
+  /** 趋势 */
+  trend?: 'up' | 'down';
+
+  children?: any;
+}
+
+const Statistic: React.FC<StatisticProps> = (props) => {
+  const {
+    className,
+    layout = 'inline',
+    style,
+    description,
+    children: _children,
+    title,
+    tip,
+    status,
+    trend,
+    prefix,
+    icon,
+    ...others
+  } = props;
+
+  const { getPrefixCls } = useContext(ConfigProvider.ConfigContext);
+  const prefixCls = getPrefixCls('pro-card-statistic');
+  const { wrapSSR, hashId } = useStyle(prefixCls);
+  const classString = clsx(prefixCls, className, hashId);
+  const statusClass = clsx(`${prefixCls}-status`, hashId);
+  const iconClass = clsx(`${prefixCls}-icon`, hashId);
+  const wrapperClass = clsx(`${prefixCls}-wrapper`, hashId);
+  const contentClass = clsx(`${prefixCls}-content`, hashId);
+
+  const statisticClassName = clsx(hashId, {
+    [`${prefixCls}-layout-${layout}`]: layout,
+    [`${prefixCls}-trend-${trend}`]: trend,
+  });
+
+  const tipDom = tip && (
+    <Tooltip title={tip}>
+      <QuestionCircleOutlined className={clsx(`${prefixCls}-tip`, hashId)} />
+    </Tooltip>
+  );
+
+  const trendIconClassName = clsx(`${prefixCls}-trend-icon`, hashId, {
+    [`${prefixCls}-trend-icon-${trend}`]: trend,
+  });
+
+  const trendDom = trend && <div className={trendIconClassName} />;
+
+  const statusDom = status && (
+    <div className={statusClass}>
+      <Badge status={status} text={null} />
+    </div>
+  );
+
+  const iconDom = icon && <div className={iconClass}>{icon}</div>;
+
+  return wrapSSR(
+    <div className={classString} style={style}>
+      {iconDom}
+      <div className={wrapperClass}>
+        {statusDom}
+        <div className={contentClass}>
+          <AntdStatistic
+            title={
+              (title || tipDom) && (
+                <>
+                  {title}
+                  {tipDom}
+                </>
+              )
+            }
+            prefix={
+              (trendDom || prefix) && (
+                <>
+                  {trendDom}
+                  {prefix}
+                </>
+              )
+            }
+            className={statisticClassName}
+            {...others}
+          />
+          {description && (
+            <div className={clsx(`${prefixCls}-description`, hashId)}>
+              {description as React.ReactNode}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>,
+  );
+};
+
+export default Statistic;

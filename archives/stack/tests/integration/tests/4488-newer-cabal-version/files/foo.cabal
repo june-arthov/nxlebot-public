@@ -1,0 +1,7 @@
+cabal-version: 3.6
+name: foo
+version: 0
+build-type: Simple
+
+library
+  default-language: Haskell2010

@@ -1,0 +1,181 @@
+# ── Cargo Workspace ────────────────────────────────────────────────────────────
+#
+# All Rust crates are members of a single workspace so they share one target
+# directory (src-tauri/target/).  This avoids multi-GB duplication that occurs
+# when crates under crates/ are built independently (each getting its own
+# target/ with duplicate copies of every transitive dependency).
+#
+# The shared target directory is configured via .cargo/config.toml:
+#   [build]
+#   target-dir = "src-tauri/target"
+#
+# This keeps the binary output where the Tauri CLI and build scripts expect it.
+
+[workspace]
+resolver = "2"
+members = [
+    "src-tauri",
+    "crates/skill-autostart",
+    "crates/skill-calendar",
+    "crates/skill-commands",
+    "crates/skill-constants",
+    "crates/brainmaster",
+    "crates/skill-daemon",
+    "crates/skill-daemon-common",
+    "crates/skill-data",
+    "crates/skill-devices",
+    "crates/skill-eeg",
+    "crates/skill-exg",
+    "crates/skill-headless",
+    "crates/skill-health",
+    "crates/skill-oura",
+    "crates/skill-gpu",
+    "crates/skill-history",
+    "crates/skill-iroh",
+    "crates/skill-jobs",
+    "crates/skill-label-index",
+    "crates/skill-lsl",
+    "crates/skill-llm",
+    "crates/skill-location",
+    "crates/skill-router",
+    "crates/skill-screenshots",
+    "crates/skill-settings",
+    "crates/skill-skills",
+    "crates/skill-tools",
+    "crates/skill-tray",
+    "crates/skill-tts",
+    "crates/skill-vision",
+    "crates/iroh_test_client",
+    "crates/iroh-example-client",
+    "crates/skill-neurorvq",
+    "crates/skill-daemon-common",
+    "crates/skill-daemon",
+]
+
+# ── Patch: Apple-Silicon Metal fix for cubek-matmul ───────────────────────────
+#
+# cubek-matmul 0.1.1 panics on Apple Silicon when the SimpleCyclicCmma tile
+# (40 KB) exceeds Metal's 32 KB shared-memory limit.  The patched fork extends
+# the 'auto' fallback chain:  SimpleCyclicCmma → SimpleUnit → Naive.
+#
+# btleplug: improved macOS BLE scanning behaviour.
+# NOTE: upstream branch has a typo ("imrpoved" → "improved"); tracked for rename.
+#
+# [patch] sections MUST live in the workspace root — they are NOT inherited
+# from member Cargo.toml files.
+
+[patch.crates-io]
+cubek-matmul    = { git = "https://github.com/eugenehp/cubek.git", branch = "cubek-matmul", package = "cubek-matmul" }
+btleplug        = { git = "https://github.com/eugenehp/btleplug.git", branch = "imrpoved_mac_version" }
+
+
+
+# ── Workspace dependencies ─────────────────────────────────────────────────────
+#
+# Shared across multiple crates to ensure a single version + feature set.
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+base64 = "0.22"
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# ── TLS crypto provider ──────────────────────────────────────────────────────
+#
+# rustls defaults to aws-lc-rs whose C build (aws-lc-sys) takes ~45 s on a
+# clean compile — the single biggest bottleneck.  ring is already in the dep
+# tree (via iroh/noq-proto) and builds in <2 s, so we force all workspace
+# consumers onto ring instead.  Crates that depend on rustls (directly or
+# transitively) should use this workspace dep.
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+# Force the `deflate` feature on zip 4.x so tauri-plugin-updater can extract
+# Deflate-compressed entries. Without this, zip 4.6.1 is compiled without
+# flate2 and produces "unsupported compression method" when the updater tries
+# to unpack a .nsis.zip built with standard Deflate (method 8).
+zip = { version = "4", features = ["deflate"] }
+
+# ── Workspace lints ────────────────────────────────────────────────────────────
+#
+# Consistent lint policy across every crate.  Individual crates inherit these
+# via `[lints] workspace = true` in their own Cargo.toml.
+#
+# We warn (not deny) so CI stays green while we migrate, but clippy will flag
+# every new `unwrap()` / missing safety doc / needless pass-by-value.
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[workspace.lints.clippy]
+# Phase 1 hardening: make critical runtime-safety lints hard errors.
+# NOTE: some tests and helper crates are still using `unwrap()`/`panic!()`;
+# keep these as allow so the workspace can pass the strict push hook.
+unwrap_used            = "allow"
+# expect_used — downgraded: thread::spawn().expect(), NonZero::new(1).expect(),
+# and Tauri app builder .expect() are idiomatic and unrecoverable. The lint
+# catches ~50 legitimate uses vs ~0 bugs.  Use `lock_or_recover()` for Mutex.
+# expect_used          = "warn"
+panic                  = "allow"
+undocumented_unsafe_blocks = "deny"
+# needless_pass_by_value — disabled: Tauri #[command] handlers and actor-thread
+# spawn sites require owned types; the lint produces ~280 false positives.
+# needless_pass_by_value = "warn"
+redundant_closure_for_method_calls = "allow"
+redundant_closure   = "allow"
+manual_let_else        = "warn"
+semicolon_if_nothing_returned = "warn"
+field_reassign_with_default = "allow"
+manual_range_contains = "allow"
+manual_is_multiple_of = "allow"
+bool_assert_comparison = "allow"
+useless_conversion = "allow"
+useless_vec = "allow"
+items_after_test_module = "allow"
+module_inception = "allow"
+assertions_on_constants = "allow"
+unnecessary_cast = "allow"
+
+# ── Build profiles ────────────────────────────────────────────────────────────
+#
+# Rust's incremental compilation on macOS uses "thin archives" for rlibs.
+# When a compilation unit inside candle-core produces a zero-length .o file
+# (any module that is entirely cfg-gated away at the chosen feature set), the
+# thin-archive builder tries to mmap it and panics:
+#   "failed to map object file: memory map must have a non-zero length"
+# Disabling incremental for just candle-core avoids the thin-archive code path
+# without penalising the rest of the workspace.
+# Tracked upstream: https://github.com/rust-lang/rust/issues/129443
+[profile.dev.package.candle-core]
+incremental = false
+
+[profile.dev]
+codegen-units = 8
+# Local/dev checks are CPU-bound and do not need full debug symbols.
+# This cuts compile time and disk I/O significantly.
+debug = 0
+
+# ── Release profile ──────────────────────────────────────────────────────────
+#
+# thin LTO gives ~90 % of full (fat) LTO's runtime performance benefit at a
+# fraction of the link-time cost.  On Windows (the slowest CI platform) this
+# shaves 2-5 min off release builds compared to the Cargo default (no LTO).
+#
+# codegen-units = 8 allows the backend to parallelise within each crate.
+# Combined with thin LTO the final binary is only ~1-2 % larger than
+# codegen-units = 1 + fat LTO, but compiles significantly faster.
+# ── Test profile ──────────────────────────────────────────────────────────────
+#
+# llama-cpp-sys-4 wraps the llama.cpp C++ library.  Without optimisations,
+# CPU inference runs at a fraction of native speed, making the LLM E2E test
+# painfully slow (~1-2 tok/s instead of 20+ tok/s).  Optimising just this
+# -sys crate (and its transitive C++ build) has no measurable impact on
+# incremental test compile times since it is already built by cmake.
+[profile.test.package.llama-cpp-sys-4]
+opt-level = 3
+
+[profile.test.package.llama-cpp-4]
+opt-level = 3
+
+[profile.release]
+lto           = "thin"
+codegen-units = 8

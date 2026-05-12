@@ -1,0 +1,28 @@
+# OCTAN Demo Script
+# Bug Bounty Automation
+
+target = "example.com"
+
+target 
+  -> scan 
+  -> ports
+
+ports
+  -> probe
+  -> live
+
+live
+  -> sqli "id"
+  -> vulns
+
+vulns
+  -> yes
+  -> exploit
+  -> shells
+
+shells
+  -> shell "whoami"
+  -> user
+
+user
+  -> print

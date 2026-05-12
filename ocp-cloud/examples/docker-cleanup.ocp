@@ -1,0 +1,18 @@
+# docker-cleanup.ocp — Bersihin Docker unused images/containers
+# Cron: tiap minggu
+
+echo "============================"
+echo " DOCKER CLEANUP - $(date)"
+echo "============================"
+
+echo ""
+echo "[Prune containers]"
+run "docker container prune -f"
+
+echo ""
+echo "[Prune images]"
+run "docker image prune -f"
+
+echo ""
+echo "[Remaining images]"
+run "docker images"

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>OC+ (Octane) DSL – Dokumentasi OpenClaw</title>
+  <style>
+    body {font-family:Arial,sans-serif; margin:2rem; line-height:1.6; background:#fafafa; color:#333;}
+    h1,h2,h3 {color:#2c3e50;}
+    code, pre {background:#eee; padding:2px 4px; border-radius:4px; font-family:monospace;}
+    pre {padding:1rem; overflow:auto;}
+    .section {margin-bottom:2rem;}
+    .note {background:#fffae6; border-left:4px solid #f1c40f; padding:0.5rem 1rem;}
+    .warning {background:#ffe6e6; border-left:4px solid #e74c3c; padding:0.5rem 1rem;}
+    a {color:#2980b9; text-decoration:none;}
+    a:hover {text-decoration:underline;}
+  </style>
+</head>
+<body>
+  <h1>OC+ (Octane) DSL – Dokumentasi OpenClaw</h1>
+  <div class="section">
+    <h2>1. Apa itu OC+?</h2>
+    <p>OC+ (kadang disebut <strong>Octane</strong>) adalah bahasa domain‑specific (DSL) yang kami ciptakan untuk meng‑orchestrasi tugas‑tugas DevOps/automation secara bersih dan mudah dibaca. Bahasa ini dirancang khusus agar dapat dipanggil dari dalam <em>OpenClaw</em> melalui skill <code>ocp-run</code>.</p>
+  </div>
+  <div class="section">
+    <h2>2. Persiapan Lingkungan</h2>
+    <ol>
+      <li>Pastikan <code>python3</code> terinstall (sudah ada di WSL).</li>
+      <li>Berikan hak eksekusi pada interpreter:
+        <pre><code>chmod +x /home/nxelleai/.openclaw/workspace/ocp_interpreter.py</code></pre>
+      </li>
+      <li>Pastikan folder skill sudah ada:
+        <pre><code>mkdir -p /home/nxelleai/.openclaw/skills/ocp-run</code></pre>
+      </li>
+      <li>Letakkan <code>SKILL.md</code> (sudah dibuat) di folder di atas.</li>
+    </ol>
+    <div class="note">
+      Semua file berada di dalam workspace <code>/home/nxelleai/.openclaw/workspace</code>.
+    </div>
+  </div>
+  <div class="section">
+    <h2>3. Format File Skrip OC+</h2>
+    <p>Skrip OC+ harus berakhiran <code>.ocp</code>. Contoh sederhana (<code>deploy.ocp</code>) dapat dilihat di bawah.</p>
+    <pre><code># deploy.ocp
+# Set variabel
+set PROJECT = "myapp"
+set ENV = "prod"
+
+# Build step
+run "npm install"
+run "npm run build"
+
+# Deploy step
+run "scp -r ./dist user@server:/var/www/$PROJECT"
+run "ssh user@server 'systemctl restart $PROJECT'"
+</code></pre>
+    <p>Baris yang dimulai dengan <code>#</code> dianggap komentar.</p>
+  </div>
+  <div class="section">
+    <h2>4. Menjalankan Skrip lewat OpenClaw</h2>
+    <ol>
+      <li>Pastikan skill ter‑register:
+        <pre><code>openclaw skills list | grep ocp-run</code></pre>
+        Jika belum muncul, jalankan <code>openclaw skills reload</code> atau restart gateway.
+      </li>
+      <li>Jalankan skrip dengan perintah <code>openclaw run ocp-run &lt;path&gt;</code>. Contoh:
+        <pre><code>openclaw run ocp-run /home/nxelleai/.openclaw/workspace/deploy.ocp</code></pre>
+      </li>
+      <li>Output (stdout/stderr) akan ditampilkan pada sesi OpenClaw yang memanggil perintah.</li>
+    </ol>
+    <div class="warning">
+      Pastikan skrip tidak mengeksekusi perintah yang berbahaya tanpa otorisasi. Intervensi manual diperlukan untuk perintah yang mengubah file system kritis.
+    </div>
+  </div>
+  <div class="section">
+    <h2>5. Mengintegrasikan ke Bot Baru</h2>
+    <p>Jika Anda memiliki bot (misalnya <code>mybot</code>) yang ingin mengeksekusi OC+, cukup tambah perintah berikut ke file <code>mybot.yaml</code> atau ke <code>AGENTS.md</code>:</p>
+    <pre><code>commands:
+  - name: deploy
+    description: Deploy aplikasi menggunakan OC+
+    exec: openclaw run ocp-run /path/to/your/script.ocp</code></pre>
+    <p>Setelah bot di‑restart, ketik <code>/deploy</code> di chat Telegram dan bot akan memanggil skill <code>ocp-run</code> secara otomatis.</p>
+  </div>
+  <div class="section">
+    <h2>6. Fitur yang Sudah Tersedia</h2>
+    <ul>
+      <li><code>set</code> – Deklarasi variabel string.</li>
+      <li><code>run "cmd"</code> – Eksekusi perintah shell dengan substitusi variabel <code>$VAR</code>.</li>
+      <li><code>echo "msg"</code> – Tulis ke stdout.</li>
+      <li><code>cd</code> – Ubah direktori kerja.</li>
+    </ul>
+    <p>Fitur lanjutan <code>parallel</code>, <code>try/catch</code>, <code>if/else</code>, dan <code>for</code> belum diimplementasikan – dapat ditambahkan pada iterasi berikutnya.</p>
+  </div>
+  <div class="section">
+    <h2>7. Troubleshooting</h2>
+    <ul>
+      <li><strong>Permission denied</strong>: Pastikan interpreter memiliki hak eksekusi (<code>chmod +x</code>).</li>
+      <li><strong>Skill not found</strong>: Jalankan <code>openclaw skills reload</code> atau restart gateway (<code>openclaw gateway restart</code>).</li>
+      <li><strong>Command fails inside script</strong>: Periksa output error di sesi OpenClaw; gunakan <code>echo</code> untuk debugging variabel.</li>
+    </ul>
+  </div>
+  <hr>
+  <p>Dokumentasi ini dibuat pada <strong>2026‑05‑04</strong> oleh Nxlebot. Simpan file <code>ocp_documentation.html</code> di dalam workspace untuk referensi selanjutnya.</p>
+</body>
+</html>

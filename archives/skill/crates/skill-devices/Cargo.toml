@@ -1,0 +1,54 @@
+[package]
+name = "skill-devices"
+version = "0.0.1"
+edition = "2021"
+license = "GPL-3.0-only"
+description = "Device-session pure logic — DND focus-mode decision engine, composite EEG score computation, battery EMA smoothing — extracted workspace crate"
+
+[dependencies]
+skill-constants = { path = "../skill-constants" }
+skill-eeg       = { path = "../skill-eeg" }
+skill-data      = { path = "../skill-data" }
+skill-iroh      = { path = "../skill-iroh" }
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Async trait + tokio channel primitives for the DeviceAdapter trait.
+# Only `sync` is needed (mpsc, oneshot) — no runtime, no I/O.
+async-trait = "0.1"
+tokio       = { version = "1", features = ["sync", "rt"] }
+bitflags    = { version = "2", features = ["serde"] }
+
+# Muse EEG – library only, no TUI feature
+muse-rs = { version = "0.1.0", default-features = false }
+
+# OpenBCI board drivers (Ganglion BLE, Cyton serial, …)
+openbci = { version = "0.0.1", features = ["ble"] }
+
+# Neurable MW75 Neuro EEG headphones (BLE activation + RFCOMM data streaming)
+mw75 = { version = "0.0.6", default-features = false }
+
+# Hermes V1 EEG headset (8-channel ADS1299, BLE)
+hermes-ble = { version = "0.0.1", default-features = false }
+
+# Emotiv EPOC / Insight / Flex (Cortex WebSocket API)
+emotiv = { version = "0.0.11", default-features = false }
+
+# IDUN Guardian in-ear EEG earbud (BLE)
+idun = { version = "0.0.3", default-features = false }
+
+# Mendi fNIRS headband (BLE)
+mendi = { version = "0.0.2", default-features = false }
+
+# Cognionics / CGX EEG headsets (USB/FTDI serial)
+cognionics = { version = "0.0.1", default-features = false }
+
+[features]
+default = []
+# Enable RFCOMM transport for MW75 (links IOBluetooth.framework on macOS,
+# bluer on Linux).  Enabling this adds ~2 s to app startup on macOS because
+# dyld loads IOBluetooth.framework at process launch.
+mw75-rfcomm = ["mw75/rfcomm"]
+
+[lints]
+workspace = true

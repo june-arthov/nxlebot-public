@@ -1,0 +1,1177 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  # Allow manual re-runs from the Actions tab on any branch.
+  workflow_dispatch:
+    inputs:
+      run_all_tests:
+        description: "Run ALL crate tests (skip change detection)"
+        type: boolean
+        default: false
+      run_llm_e2e:
+        description: "Run LLM E2E integration test"
+        type: boolean
+        default: false
+      run_lsl_e2e:
+        description: "Run LSL E2E integration test (32-ch 256 Hz pipeline, ~30 s)"
+        type: boolean
+        default: false
+
+# Cancel superseded runs on the same branch / PR — avoids wasting runner
+# minutes when multiple commits are pushed in quick succession.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Opt into Node.js 24 now so we surface any action incompatibilities before
+# GitHub forces the switch on June 2, 2026.
+# ilammy/msvc-dev-cmd, KyleMayes/install-llvm-action and
+# Mozilla-Actions/sccache-action are all still on node20 in their latest
+# releases — update these pins when node24 builds ship.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  changelog-gate:
+    name: Changelog fragments gate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Validate changelog fragment format (if present)
+        run: |
+          node scripts/check-changelog-fragments.js \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.event.pull_request.head.sha }}"
+
+  # ── Rust backend ─────────────────────────────────────────────────────────────
+  #
+  # clippy is a strict superset of `cargo check` — it performs the same
+  # compilation AND runs lint passes.  Running both wastes a full compile
+  # cycle (~3-5 min).  We therefore run clippy only.
+  #
+  # `--workspace --exclude skill` covers all library crates without the
+  # espeak/Vulkan deps; a second clippy pass covers the app crate with
+  # those features enabled.
+  #
+  # mold (fast linker) is installed to match the release-linux workflow and
+  # shave 30-60 s off every link-heavy operation.
+  rust-check:
+    name: Rust — clippy + test
+    runs-on: ubuntu-latest
+    steps:
+      # ── Free pre-installed software we don't use (~10 GB reclaimed) ──────────
+      # ubuntu-latest ships Android SDK, .NET, Swift, Haskell, CodeQL, large
+      # Docker layers, and mono — none of which this project needs.
+      # Without this, the Rust build cache restore + compile fills the ~14 GB
+      # runner disk and causes "No space left on device" failures.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/.ghcup
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/share/chromium
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af 2>/dev/null || true
+          df -h /
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          submodules: true
+
+      - name: Setup Rust bootstrap (Linux)
+        uses: ./.github/actions/setup-rust-bootstrap-linux
+
+      # Swatinem/rust-cache gives smarter per-crate invalidation and automatic
+      # pruning vs manual actions/cache — matches the release workflows.
+      - name: Cache Cargo registry + build artifacts
+        uses: Swatinem/rust-cache@v2.9.0
+        with:
+          workspaces: ". -> src-tauri/target"
+          shared-key: linux-ci-x86_64-unknown-linux-gnu-v1
+          cache-targets: false
+          cache-on-failure: false
+
+      # ── ONNX Runtime (official binaries) ───────────────────────────────────
+      # Avoid ort-sys download flakiness from cdn.pyke.io in CI by installing
+      # the official Microsoft release and pointing ORT_LIB_LOCATION at it.
+      - name: Setup ONNX Runtime (Linux x64)
+        uses: ./.github/actions/setup-onnxruntime-linux
+
+      - name: Cache + install Tauri system deps (incl. mold + clang)
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev libappindicator3-dev
+            librsvg2-dev patchelf libssl-dev
+            libudev-dev libdbus-1-dev pkg-config
+            libespeak-ng-dev libasound2-dev
+            libpipewire-0.3-dev libgbm-dev
+            cmake binutils mold clang
+            protobuf-compiler
+          version: tauri-rust-check-v4
+
+      # Vulkan SDK — required by the llm-vulkan feature (llama.cpp Vulkan backend).
+      # Cached via reusable action to avoid repeated ~200 MB downloads.
+      - name: Setup Vulkan SDK
+        uses: ./.github/actions/setup-vulkan-linux
+
+      - name: Download prebuilt llama libs (Linux, optional)
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="https://github.com/eugenehp/llama-cpp-rs/releases/latest/download/llama-prebuilt-linux-x86_64-unknown-linux-gnu-q1-vulkan.tar.gz"
+          ARCHIVE="$RUNNER_TEMP/llama-prebuilt-linux.tar.gz"
+          DEST="$RUNNER_TEMP/llama-prebuilt-linux"
+          EXPECTED_TARGET="x86_64-unknown-linux-gnu"
+          EXPECTED_FEATURE="vulkan"
+          mkdir -p "$DEST"
+
+          if ! curl -fL "$URL" -o "$ARCHIVE"; then
+            echo "[warn] prebuilt llama artifact unavailable; fallback to source build"
+            exit 0
+          fi
+
+          tar -xzf "$ARCHIVE" -C "$DEST"
+          ROOT="$DEST"
+          if [[ ! -d "$ROOT/lib" && ! -d "$ROOT/lib64" && ! -d "$ROOT/bin" ]]; then
+            ROOT="$(find "$DEST" -mindepth 1 -maxdepth 1 -type d | head -n1 || true)"
+          fi
+
+          if [[ -z "${ROOT:-}" ]]; then
+            echo "[warn] prebuilt llama archive layout invalid; fallback to source build"
+            exit 0
+          fi
+
+          if ! find "$ROOT" -type f \( -name '*.a' -o -name '*.so' \) | head -n1 >/dev/null; then
+            echo "[warn] prebuilt llama archive contains no static/shared libs; fallback to source build"
+            exit 0
+          fi
+
+          if [[ -f "$ROOT/metadata.json" ]]; then
+            TARGET="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("target",""))' "$ROOT/metadata.json")"
+            FEATURES="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("features",""))' "$ROOT/metadata.json")"
+            if [[ "$TARGET" != "$EXPECTED_TARGET" || "$FEATURES" != *"$EXPECTED_FEATURE"* ]]; then
+              echo "[warn] prebuilt metadata mismatch (target=$TARGET features=$FEATURES); fallback to source build"
+              exit 0
+            fi
+          fi
+
+          echo "LLAMA_PREBUILT_DIR=$ROOT" >> "$GITHUB_ENV"
+          echo "LLAMA_PREBUILT_SHARED=0" >> "$GITHUB_ENV"
+          echo "[ok] LLAMA_PREBUILT_DIR=$ROOT"
+
+      # clippy (workspace crates — no espeak/Vulkan deps needed)
+      - name: cargo clippy (workspace crates)
+        env:
+          RUSTC_WRAPPER: sccache
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=mold
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_cmd() {
+            cargo clippy --locked --target x86_64-unknown-linux-gnu \
+              --workspace --exclude skill \
+              -- -D warnings
+          }
+          if ! run_cmd; then
+            if [[ -n "${LLAMA_PREBUILT_DIR:-}" ]]; then
+              echo "::warning::clippy failed with prebuilt llama; retrying with source build"
+              unset LLAMA_PREBUILT_DIR LLAMA_PREBUILT_SHARED
+              run_cmd
+            else
+              exit 1
+            fi
+          fi
+
+      # clippy (app crate — needs espeak + Vulkan)
+      - name: cargo clippy (app)
+        env:
+          RUSTC_WRAPPER: sccache
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=mold
+          # Cache cmake-based -sys crate builds (llama-cpp-sys, etc.)
+          CMAKE_C_COMPILER_LAUNCHER:   sccache
+          CMAKE_CXX_COMPILER_LAUNCHER: sccache
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_cmd() {
+            cargo clippy -p skill --locked --target x86_64-unknown-linux-gnu --features llm-vulkan,screenshots -- -D warnings
+          }
+          if ! run_cmd; then
+            if [[ -n "${LLAMA_PREBUILT_DIR:-}" ]]; then
+              echo "::warning::app clippy failed with prebuilt llama; retrying with source build"
+              unset LLAMA_PREBUILT_DIR LLAMA_PREBUILT_SHARED
+              run_cmd
+            else
+              exit 1
+            fi
+          fi
+
+      # Determine which crates need testing based on changed files.
+      # On PRs: compare against the base branch.
+      # On pushes to main/develop: compare against the previous commit.
+      # On manual dispatch: test everything.
+      - name: Determine changed crates
+        id: changed
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            BASE="${{ github.event.before }}"
+          else
+            BASE=""
+          fi
+
+          ALL_CRATE_FLAGS="-p skill-eeg -p skill-data -p skill-constants -p skill-tools -p skill-devices -p skill-settings -p skill-history -p skill-health -p skill-router -p skill-llm -p skill-autostart -p skill-tts -p skill-gpu -p skill-headless -p skill-label-index -p skill-skills -p skill-jobs -p skill-commands -p skill-exg -p skill-screenshots"
+
+          if [[ "${{ inputs.run_all_tests }}" == "true" ]]; then
+            # Manual dispatch with run_all_tests — test everything
+            CRATE_FLAGS="$ALL_CRATE_FLAGS"
+          elif [[ -z "$BASE" || "$BASE" == "0000000000000000000000000000000000000000" ]]; then
+            # First push or manual dispatch — test everything
+            CRATE_FLAGS="$ALL_CRATE_FLAGS"
+          else
+            CRATE_FLAGS=$(bash scripts/changed-crates.sh "$BASE")
+          fi
+
+          echo "crate_flags=$CRATE_FLAGS" >> "$GITHUB_OUTPUT"
+          if [[ -z "$CRATE_FLAGS" || "$CRATE_FLAGS" == "# "* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::No testable crates affected — skipping cargo test"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Testing (unit): $CRATE_FLAGS"
+          fi
+
+          # Filter for crates that have integration tests (tests/*.rs).
+          # skill-llm E2E is excluded — it's gated by manual dispatch.
+          INT_CRATES="skill-eeg skill-data skill-headless skill-jobs skill-screenshots skill-history skill-settings skill-router skill-label-index skill-skills skill-tools skill-commands skill-llm"
+          INT_FLAGS=""
+          for c in $INT_CRATES; do
+            if echo "$CRATE_FLAGS" | grep -qw "\-p $c"; then
+              INT_FLAGS="$INT_FLAGS -p $c"
+            fi
+          done
+          INT_FLAGS="$(echo "$INT_FLAGS" | xargs)"  # trim
+
+          if [[ -n "$INT_FLAGS" ]]; then
+            echo "int_flags=$INT_FLAGS" >> "$GITHUB_OUTPUT"
+            echo "skip_int=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Testing (integration): $INT_FLAGS"
+          else
+            echo "int_flags=" >> "$GITHUB_OUTPUT"
+            echo "skip_int=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::No integration-testable crates affected"
+          fi
+
+      - name: cargo test (affected crates — unit)
+        id: rust_unit_tests
+        if: steps.changed.outputs.skip != 'true'
+        env:
+          RUSTC_WRAPPER: sccache
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=mold
+        shell: bash
+        run: |
+          set -euo pipefail
+          start_ts="$(date +%s)"
+          run_cmd() {
+            cargo test --locked --target x86_64-unknown-linux-gnu \
+              ${{ steps.changed.outputs.crate_flags }} \
+              --lib
+          }
+          if ! run_cmd; then
+            if [[ -n "${LLAMA_PREBUILT_DIR:-}" ]]; then
+              echo "::warning::unit tests failed with prebuilt llama; retrying with source build"
+              unset LLAMA_PREBUILT_DIR LLAMA_PREBUILT_SHARED
+              run_cmd
+            else
+              exit 1
+            fi
+          fi
+          end_ts="$(date +%s)"
+          echo "duration_sec=$((end_ts - start_ts))" >> "$GITHUB_OUTPUT"
+
+      - name: cargo test (affected crates — integration)
+        id: rust_integration_tests
+        if: steps.changed.outputs.skip_int != 'true'
+        env:
+          RUSTC_WRAPPER: sccache
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=mold
+        shell: bash
+        run: |
+          set -euo pipefail
+          start_ts="$(date +%s)"
+          run_cmd() {
+            cargo test --locked --target x86_64-unknown-linux-gnu \
+              ${{ steps.changed.outputs.int_flags }} \
+              --test '*'
+          }
+          if ! run_cmd; then
+            if [[ -n "${LLAMA_PREBUILT_DIR:-}" ]]; then
+              echo "::warning::integration tests failed with prebuilt llama; retrying with source build"
+              unset LLAMA_PREBUILT_DIR LLAMA_PREBUILT_SHARED
+              run_cmd
+            else
+              exit 1
+            fi
+          fi
+          end_ts="$(date +%s)"
+          echo "duration_sec=$((end_ts - start_ts))" >> "$GITHUB_OUTPUT"
+
+      - name: Collect Rust health metrics
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-metrics
+          UNIT_SEC="${{ steps.rust_unit_tests.outputs.duration_sec || '0' }}"
+          INT_SEC="${{ steps.rust_integration_tests.outputs.duration_sec || '0' }}"
+
+          {
+            echo '{'
+            echo '  "job": "rust-check",'
+            echo '  "unit_test_duration_sec":' "$UNIT_SEC" ','
+            echo '  "integration_test_duration_sec":' "$INT_SEC"
+            echo '}'
+          } > ci-metrics/rust-check.json
+
+          {
+            echo "## Rust health metrics"
+            echo "- Unit test duration: ${UNIT_SEC}s"
+            echo "- Integration test duration: ${INT_SEC}s"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Capture sccache stats
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p ci-metrics
+          sccache --show-stats > ci-metrics/rust-sccache-stats.txt || true
+
+      - name: Summarize sccache hit rate (Rust job)
+        if: always()
+        shell: bash
+        run: |
+          STATS=ci-metrics/rust-sccache-stats.txt
+          if [[ ! -f "$STATS" ]]; then
+            echo "- sccache stats: unavailable" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          TOTAL_HIT_RATE="$(awk '/^Cache hits rate[[:space:]]/{print $(NF-1)" "$NF; exit}' "$STATS")"
+          RUST_HIT_RATE="$(awk '/^Cache hits rate \(Rust\)/{print $(NF-1)" "$NF; exit}' "$STATS")"
+          CACHE_LOCATION="$(awk -F'Cache location[[:space:]]+' '/^Cache location/{print $2; exit}' "$STATS")"
+          {
+            echo "## sccache metrics (Rust job)"
+            echo "- Cache location: ${CACHE_LOCATION:-unknown}"
+            echo "- Total hit rate: ${TOTAL_HIT_RATE:-unknown}"
+            echo "- Rust hit rate: ${RUST_HIT_RATE:-unknown}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Rust health metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-health-rust-check
+          path: ci-metrics/
+          retention-days: 30
+
+  # ── Frontend ─────────────────────────────────────────────────────────────────
+  frontend-check:
+    name: Frontend — check + i18n + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      # Retry handles transient ETXTBSY from esbuild postinstall on Linux.
+      - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci || npm ci
+
+      # Run i18n sync first — it's cheap and catches missing translation keys
+      # before the slower svelte-check.
+      - name: i18n sync check
+        run: npm run sync:i18n:check
+
+      - name: i18n audit check
+        run: npm run audit:i18n:check
+
+      - name: i18n locales check (all non-en locales)
+        run: npm run -s check:i18n:locales
+
+      # Biome — format check (fast, ~100ms; lint is advisory via warnings)
+      - name: Biome format check
+        run: npx biome format src/ scripts/
+
+      - name: Biome lint
+        run: npx biome lint src/ scripts/
+
+      - name: Daemon thin-client invoke guard
+        run: npm run -s check:daemon-invokes
+
+      - name: svelte-check
+        id: frontend_svelte_check
+        shell: bash
+        run: |
+          set -euo pipefail
+          start_ts="$(date +%s)"
+          npm run check
+          end_ts="$(date +%s)"
+          echo "duration_sec=$((end_ts - start_ts))" >> "$GITHUB_OUTPUT"
+
+      - name: Unit tests
+        id: frontend_unit_tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          start_ts="$(date +%s)"
+          npm test
+          end_ts="$(date +%s)"
+          echo "duration_sec=$((end_ts - start_ts))" >> "$GITHUB_OUTPUT"
+
+      - name: Collect Frontend health metrics
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-metrics
+          CHECK_SEC="${{ steps.frontend_svelte_check.outputs.duration_sec || '0' }}"
+          TEST_SEC="${{ steps.frontend_unit_tests.outputs.duration_sec || '0' }}"
+
+          {
+            echo '{'
+            echo '  "job": "frontend-check",'
+            echo '  "svelte_check_duration_sec":' "$CHECK_SEC" ','
+            echo '  "unit_test_duration_sec":' "$TEST_SEC"
+            echo '}'
+          } > ci-metrics/frontend-check.json
+
+          {
+            echo "## Frontend health metrics"
+            echo "- svelte-check duration: ${CHECK_SEC}s"
+            echo "- Unit test duration: ${TEST_SEC}s"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Frontend health metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-health-frontend-check
+          path: ci-metrics/
+          retention-days: 30
+
+  # ── Windows Rust backend ─────────────────────────────────────────────────────
+  #
+  # Same optimisation as Linux: clippy replaces check (superset), removing
+  # a redundant full compilation pass.
+  windows-check:
+    name: Windows — cargo clippy
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Validate Windows app manifest
+        shell: bash
+        run: python scripts/check_windows_manifest.py src-tauri/manifest.xml
+
+      # Puts cl.exe, link.exe, lib.exe, and signtool.exe in PATH.
+      # Required for the espeak-ng static library build (lib.exe) and for
+      # the Vulkan SDK CMake integration used by the llm-vulkan feature.
+      - name: Set up MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Validate Windows app manifest with mt.exe
+        shell: powershell
+        run: |
+          $mt = Get-Command mt.exe -ErrorAction SilentlyContinue
+          if (-not $mt) {
+            Write-Error "mt.exe not found in PATH"
+            exit 1
+          }
+          & $mt.Source -nologo -manifest src-tauri/manifest.xml -validate_manifest
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "mt.exe manifest validation failed"
+            exit $LASTEXITCODE
+          }
+          Write-Host "[ok] mt.exe manifest validation passed"
+
+      # Git for Windows ships a Unix hard-link utility at
+      # C:\Program Files\Git\usr\bin prepends two problematic binaries to PATH
+      # at every step (GITHUB_PATH is re-applied each step so runtime deletions
+      # don't survive, but file-level deletions do):
+      #
+      #   link.exe — silently shadows MSVC's linker → build picks wrong linker
+      #   tar.exe  — GNU tar used by actions/cache post-cleanup with --posix,
+      #              which restricts filenames to POSIX-portable characters and
+      #              corrupts / drops Windows paths in the Rust build cache.
+      #              Removing it forces actions/cache to use the built-in
+      #              C:\Windows\System32\tar.exe (bsdtar 3.x) instead.
+      - name: Remove Git's link.exe and tar.exe (shadow MSVC linker / corrupt cache)
+        shell: powershell
+        run: |
+          foreach ($bin in @("link.exe", "tar.exe")) {
+            $path = "C:\Program Files\Git\usr\bin\$bin"
+            if (Test-Path $path) {
+              Remove-Item $path -Force
+              Write-Host "[ok] Deleted $path"
+            } else {
+              Write-Host "[skip] $path not found"
+            }
+          }
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      # Swatinem/rust-cache is used here (matching the release workflow) for
+      # smarter per-crate invalidation vs the manual actions/cache approach.
+      - name: Cache Cargo registry + build artifacts
+        uses: Swatinem/rust-cache@v2.9.0
+        with:
+          workspaces: ". -> src-tauri/target"
+          shared-key: windows-ci-x86_64-pc-windows-msvc-v1
+          cache-targets: false
+          cache-on-failure: false
+
+      # ── ONNX Runtime (official binaries) ───────────────────────────────────
+      # Avoid ort-sys download flakiness from cdn.pyke.io in CI.
+      - name: Setup ONNX Runtime (Windows x64)
+        uses: ./.github/actions/setup-onnxruntime-windows
+
+      # ── Build cache (sccache) ───────────────────────────────────────────────
+      - name: Setup sccache
+        uses: Mozilla-Actions/sccache-action@v0.0.9
+
+      - name: Configure sccache for GitHub Actions cache
+        shell: bash
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+          echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_VERSION=1" >> "$GITHUB_ENV"
+
+          # Ensure cargo.exe can always resolve sccache on Windows.
+          if [ -n "${SCCACHE_PATH:-}" ]; then
+            SCCACHE_DIR="$(dirname "$SCCACHE_PATH")"
+            if [ -f "$SCCACHE_DIR/sccache.exe" ]; then
+              SCCACHE_NATIVE="$(cygpath -w "$SCCACHE_DIR/sccache.exe")"
+              echo "RUSTC_WRAPPER=$SCCACHE_NATIVE" >> "$GITHUB_ENV"
+              echo "$SCCACHE_DIR" >> "$GITHUB_PATH"
+              echo "[ok] RUSTC_WRAPPER=$SCCACHE_NATIVE"
+            elif [ -f "$SCCACHE_PATH.exe" ]; then
+              SCCACHE_NATIVE="$(cygpath -w "$SCCACHE_PATH.exe")"
+              echo "RUSTC_WRAPPER=$SCCACHE_NATIVE" >> "$GITHUB_ENV"
+              echo "$(dirname "$SCCACHE_PATH.exe")" >> "$GITHUB_PATH"
+              echo "[ok] RUSTC_WRAPPER=$SCCACHE_NATIVE"
+            else
+              echo "[warn] sccache binary not found via SCCACHE_PATH=$SCCACHE_PATH"
+            fi
+          else
+            echo "[warn] SCCACHE_PATH not set; relying on PATH resolution"
+          fi
+
+      - name: Install protoc (Windows)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Test-Protoc {
+            try {
+              $null = & protoc --version
+              return ($LASTEXITCODE -eq 0)
+            } catch {
+              return $false
+            }
+          }
+
+          if (Test-Protoc) {
+            protoc --version
+            exit 0
+          }
+
+          $installed = $false
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              choco install protoc --no-progress -y
+            } catch {
+              Write-Host "[warn] choco protoc install attempt $i failed: $($_.Exception.Message)"
+            }
+
+            if (Test-Protoc) {
+              $installed = $true
+              break
+            }
+
+            Start-Sleep -Seconds (5 * $i)
+          }
+
+          if (-not $installed) {
+            Write-Host "[warn] Chocolatey unavailable; falling back to direct protoc download"
+            $ver = "25.3"
+            $url = "https://github.com/protocolbuffers/protobuf/releases/download/v$ver/protoc-$ver-win64.zip"
+            $zip = Join-Path $env:RUNNER_TEMP "protoc-$ver-win64.zip"
+            $dest = Join-Path $env:RUNNER_TEMP "protoc-$ver"
+            Invoke-WebRequest -Uri $url -OutFile $zip
+            Expand-Archive -Path $zip -DestinationPath $dest -Force
+            $bin = Join-Path $dest "bin"
+            if (-not (Test-Path (Join-Path $bin "protoc.exe"))) {
+              throw "protoc fallback install failed: protoc.exe not found"
+            }
+            $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            $env:PATH = "$bin;$env:PATH"
+            Write-Host "[ok] Installed protoc via direct download"
+          }
+
+          if (-not (Test-Protoc)) {
+            throw "protoc installation failed after Chocolatey + fallback"
+          }
+          protoc --version
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      # Retry handles transient ETXTBSY from esbuild postinstall on Linux.
+      - name: Install JS dependencies
+        run: npm ci || npm ci
+
+      # Catch PowerShell encoding bugs (e.g. UTF-8 multi-byte sequences that
+      # Windows-1252-reading PS5.1 misinterprets as string delimiters) before
+      # they break the build.  Uses the PS parser directly — no execution needed.
+      - name: Validate PowerShell scripts (syntax check)
+        shell: powershell
+        run: |
+          $failed = $false
+          Get-ChildItem scripts\*.ps1 | ForEach-Object {
+            $parseErrors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile(
+              $_.FullName, [ref]$null, [ref]$parseErrors
+            )
+            if ($parseErrors.Count -gt 0) {
+              Write-Host "::error file=$($_.Name)::$($parseErrors.Count) parse error(s):"
+              $parseErrors | ForEach-Object { Write-Host "  $_" }
+              $failed = $true
+            } else {
+              Write-Host "[ok] $($_.Name)"
+            }
+          }
+          if ($failed) { exit 1 }
+          Write-Host "[ok] All PowerShell scripts parse cleanly."
+
+      # Cache the Vulkan SDK installation directory so the ~200 MB download
+      # only happens once per change to the install script.  On cache hit the
+      # install script detects the SDK via filesystem and skips the download.
+      - name: Cache Vulkan SDK
+        uses: actions/cache@v5
+        with:
+          path: C:\VulkanSDK
+          key: windows-vulkan-sdk-${{ hashFiles('scripts/install-vulkan-sdk.ps1') }}
+
+      # Run install script (no-op on cache hit) then propagate the SDK path
+      # to subsequent steps via GITHUB_ENV.  Without this, cargo/cmake can't
+      # find the Vulkan headers when the SDK was restored from cache rather
+      # than freshly installed (the machine-level env var isn't in the cache).
+      - name: Install Vulkan SDK + export VULKAN_SDK
+        shell: powershell
+        run: |
+          .\scripts\install-vulkan-sdk.ps1
+          if (-not $env:VULKAN_SDK) {
+            Write-Error "VULKAN_SDK was not set by install-vulkan-sdk.ps1"
+            exit 1
+          }
+          "VULKAN_SDK=$env:VULKAN_SDK" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "[ok] Exported VULKAN_SDK=$env:VULKAN_SDK"
+
+      - name: Download prebuilt llama libs (Windows, optional)
+        shell: powershell
+        run: |
+          $url = "https://github.com/eugenehp/llama-cpp-rs/releases/latest/download/llama-prebuilt-windows-x86_64-pc-windows-msvc-q1-vulkan.tar.gz"
+          $archive = Join-Path $env:RUNNER_TEMP "llama-prebuilt-windows.tar.gz"
+          $dest = Join-Path $env:RUNNER_TEMP "llama-prebuilt-windows"
+          $expectedTarget = "x86_64-pc-windows-msvc"
+          $expectedFeature = "vulkan"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+
+          try {
+            Invoke-WebRequest -Uri $url -OutFile $archive
+            tar -xzf $archive -C $dest
+
+            $root = $dest
+            if (-not (Test-Path (Join-Path $root "lib")) -and -not (Test-Path (Join-Path $root "lib64")) -and -not (Test-Path (Join-Path $root "bin"))) {
+              $candidate = Get-ChildItem $dest -Directory | Select-Object -First 1
+              if ($candidate) { $root = $candidate.FullName }
+            }
+
+            if (-not $root -or -not (Test-Path $root)) {
+              Write-Host "[warn] prebuilt llama archive layout invalid; fallback to source build"
+              exit 0
+            }
+
+            $libs = Get-ChildItem -Path $root -Recurse -File -Include *.lib,*.dll -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $libs) {
+              Write-Host "[warn] prebuilt llama archive contains no windows libs; fallback to source build"
+              exit 0
+            }
+
+            $metadataPath = Join-Path $root "metadata.json"
+            if (Test-Path $metadataPath) {
+              $meta = Get-Content $metadataPath -Raw | ConvertFrom-Json
+              if ($meta.target -ne $expectedTarget -or -not ($meta.features -like "*$expectedFeature*")) {
+                Write-Host "[warn] prebuilt metadata mismatch (target=$($meta.target) features=$($meta.features)); fallback to source build"
+                exit 0
+              }
+            }
+
+            "LLAMA_PREBUILT_DIR=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "LLAMA_PREBUILT_SHARED=0" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            Write-Host "[ok] LLAMA_PREBUILT_DIR=$root"
+          } catch {
+            Write-Host "[warn] prebuilt llama artifact unavailable or invalid; fallback to source build"
+          }
+
+      # ── Standalone LLVM 19 for bindgen ──────────────────────────────────────
+      # VS2022's bundled Clang 19 is an MSVC-compat build (clang-cl) whose
+      # mmintrin.h references __builtin_ia32_* GCC-style intrinsics that
+      # clang-cl doesn't implement, causing bindgen (llama-cpp-sys-4) to panic
+      # with ~20 "use of undeclared identifier '__builtin_ia32_…'" errors.
+      #
+      # Fix: standalone LLVM 19 (non-MSVC-compat) implements all those builtins
+      # AND its headers match the same version VS2022 ships, so there is no
+      # version mismatch.  KyleMayes/install-llvm-action downloads directly
+      # from the LLVM GitHub releases (no Chocolatey dependency), has its own
+      # built-in cache keyed on the version string, and installs to C:\LLVM
+      # (a path without spaces, which avoids quoting issues in env vars).
+      #
+      # clang-sys checks LIBCLANG_PATH before PATH, so the explicit export
+      # below guarantees bindgen finds standalone LLVM's libclang.dll even
+      # when ilammy/msvc-dev-cmd has already put VS's clang-cl on PATH.
+      - name: Install LLVM 19
+        uses: KyleMayes/install-llvm-action@v2.0.9
+        with:
+          version: "19"
+          directory: C:\LLVM
+
+      - name: Export LIBCLANG_PATH
+        shell: powershell
+        run: |
+          # KyleMayes/install-llvm-action sets LLVM_PATH to the install root.
+          # libclang.dll lives in the bin/ subdirectory for Windows builds
+          # downloaded from LLVM GitHub releases.
+          $dll = Get-ChildItem "C:\LLVM" -Recurse -Filter "libclang.dll" `
+                   -ErrorAction SilentlyContinue |
+                   Select-Object -First 1
+          if (-not $dll) {
+            Write-Error "libclang.dll not found under C:\LLVM"
+            exit 1
+          }
+          $dir = Split-Path $dll.FullName
+          "LIBCLANG_PATH=$dir" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "[ok] LIBCLANG_PATH=$dir  (libclang.dll at $($dll.FullName))"
+          
+          # Also set LLVM_CONFIG to help with toolchain detection
+          "LLVM_CONFIG=C:\LLVM\bin\llvm-config.exe" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "[ok] LLVM_CONFIG=C:\LLVM\bin\llvm-config.exe"
+          
+          # Set additional environment to bypass issues in clang-cl with mmx intrinsics
+          "CC=C:\LLVM\bin\clang.exe" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "[ok] CC=C:\LLVM\bin\clang.exe"
+          
+          "CXX=C:\LLVM\bin\clang++.exe" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "[ok] CXX=C:\LLVM\bin\clang++.exe"
+
+      # clippy replaces check — clippy performs the same compilation plus lint
+      # passes, so running both wastes a full compile cycle.
+      - name: cargo clippy
+        shell: bash
+        env:
+          LIBCLANG_PATH: ${{ env.LIBCLANG_PATH }}
+          VULKAN_SDK:    ${{ env.VULKAN_SDK }}
+          LLVM_CONFIG:   ${{ env.LLVM_CONFIG }}
+          CC:            ${{ env.CC }}
+          CXX:           ${{ env.CXX }}
+        run: |
+          set -euo pipefail
+          run_cmd() {
+            cargo clippy -p skill \
+              --target x86_64-pc-windows-msvc \
+              --features llm-vulkan,screenshots \
+              -- -D warnings
+          }
+          if ! run_cmd; then
+            if [[ -n "${LLAMA_PREBUILT_DIR:-}" ]]; then
+              echo "::warning::windows clippy failed with prebuilt llama; retrying with source build"
+              unset LLAMA_PREBUILT_DIR LLAMA_PREBUILT_SHARED
+              run_cmd
+            else
+              exit 1
+            fi
+          fi
+
+      - name: Capture + summarize sccache hit rate (Windows job)
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p ci-metrics
+          sccache --show-stats > ci-metrics/windows-sccache-stats.txt || true
+          STATS=ci-metrics/windows-sccache-stats.txt
+          if [[ ! -f "$STATS" ]]; then
+            echo "- sccache stats: unavailable" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          TOTAL_HIT_RATE="$(awk '/^Cache hits rate[[:space:]]/{print $(NF-1)" "$NF; exit}' "$STATS")"
+          RUST_HIT_RATE="$(awk '/^Cache hits rate \(Rust\)/{print $(NF-1)" "$NF; exit}' "$STATS")"
+          CACHE_LOCATION="$(awk -F'Cache location[[:space:]]+' '/^Cache location/{print $2; exit}' "$STATS")"
+          {
+            echo "## sccache metrics (Windows job)"
+            echo "- Cache location: ${CACHE_LOCATION:-unknown}"
+            echo "- Total hit rate: ${TOTAL_HIT_RATE:-unknown}"
+            echo "- Rust hit rate: ${RUST_HIT_RATE:-unknown}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── LLM end-to-end integration test ──────────────────────────────────────────
+  llm-e2e:
+    name: LLM — E2E integration test
+    runs-on: ubuntu-latest
+    # Run after rust-check so we reuse its cached build artifacts (clippy
+    # already compiled the full workspace including skill-llm).  This
+    # turns the E2E compilation into a cheap incremental build (~30 s)
+    # instead of a full rebuild (~3-5 min).
+    needs: rust-check
+    # Optional — only runs on manual dispatch with run_llm_e2e checked.
+    if: github.event_name == 'workflow_dispatch' && inputs.run_llm_e2e == true
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Setup Rust bootstrap (Linux)
+        uses: ./.github/actions/setup-rust-bootstrap-linux
+
+      # Reuse the same cache bucket as rust-check (default shared-key)
+      # so the E2E job picks up clippy's already-compiled artifacts.
+      # save-if: false — only rust-check writes to this cache.
+      - name: Cache Cargo registry + build artifacts
+        uses: Swatinem/rust-cache@v2.9.0
+        with:
+          workspaces: ". -> src-tauri/target"
+          shared-key: linux-ci-x86_64-unknown-linux-gnu-v1
+          save-if: false
+          cache-targets: false
+          cache-on-failure: false
+
+      - name: Setup ONNX Runtime (Linux x64)
+        uses: ./.github/actions/setup-onnxruntime-linux
+
+      # Install all system deps in one cached step (includes mold + clang
+      # to match rust-check's linker and reuse its build artifacts).
+      - name: Cache + install system deps
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: >-
+            libssl-dev pkg-config cmake binutils
+            libespeak-ng-dev libasound2-dev
+            libpipewire-0.3-dev mold clang
+            protobuf-compiler
+          version: llm-e2e-v3
+
+      # Reuse the same Vulkan SDK cache as rust-check via reusable setup action.
+      - name: Setup Vulkan SDK
+        uses: ./.github/actions/setup-vulkan-linux
+
+      - name: Cache HuggingFace model
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/huggingface
+          key: hf-llm-e2e-v1
+
+      - name: Run LLM E2E test
+        env:
+          RUSTC_WRAPPER: sccache
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=mold
+          # Cache cmake-based -sys crate builds (llama-cpp-sys, etc.)
+          CMAKE_C_COMPILER_LAUNCHER:   sccache
+          CMAKE_CXX_COMPILER_LAUNCHER: sccache
+        run: |
+          cargo test -p skill-llm --locked --target x86_64-unknown-linux-gnu \
+            --features llm \
+            --test llm_e2e -- --nocapture 2>&1 | tee llm-e2e-report.txt
+          # Propagate the test exit code (tee masks it).
+          exit ${PIPESTATUS[0]}
+
+      - name: Write Job Summary
+        if: always()
+        run: |
+          FILE=llm-e2e-report.txt
+          [ -f "$FILE" ] || { echo "No report file found" >> "$GITHUB_STEP_SUMMARY"; exit 0; }
+
+          echo "## LLM E2E Integration Test" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          # Extract model info
+          MODEL=$(grep -oP '(?<=Model: )\S+' "$FILE" | head -1 || true)
+          TOTAL=$(grep 'TOTAL' "$FILE" | grep -oP '[0-9]+\.[0-9]+s' | head -1 || true)
+          if [ -n "$MODEL" ]; then
+            echo "**Model:** \`$MODEL\`  **Total:** \`$TOTAL\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Extract the report box (between the two ╔ headers) and format as
+          # a fenced code block — preserves the box-drawing layout perfectly.
+          echo "### Report" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          # Grab everything from "E2E INTEGRATION TEST REPORT" to the closing ╚
+          sed -n '/E2E INTEGRATION TEST REPORT/,/^╚/p' "$FILE" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          # Verdict
+          if grep -q 'ALL CHECKS PASSED' "$FILE"; then
+            echo "### Result: ALL CHECKS PASSED ✅" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Result: SOME CHECKS FAILED ❌" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload E2E report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-e2e-report
+          path: llm-e2e-report.txt
+          retention-days: 30
+
+  # ── LSL end-to-end integration test ───────────────────────────────────────────
+  lsl-e2e:
+    name: LSL — E2E integration test
+    runs-on: ubuntu-latest
+    needs: rust-check
+    # Optional — only runs on manual dispatch with run_lsl_e2e checked.
+    if: github.event_name == 'workflow_dispatch' && inputs.run_lsl_e2e == true
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Setup Rust bootstrap (Linux)
+        uses: ./.github/actions/setup-rust-bootstrap-linux
+
+      # Reuse rust-check's cached artifacts (save-if: false — only rust-check writes).
+      - name: Cache Cargo registry + build artifacts
+        uses: Swatinem/rust-cache@v2.9.0
+        with:
+          workspaces: ". -> src-tauri/target"
+          shared-key: linux-ci-x86_64-unknown-linux-gnu-v1
+          save-if: false
+          cache-targets: false
+          cache-on-failure: false
+
+      # rlsl is pure Rust (no liblsl system dependency) so only the minimal
+      # set of packages is needed: mold+clang for the fast linker, and the
+      # basic dev headers shared with the workspace build.
+      - name: Cache + install system deps
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: >-
+            libssl-dev pkg-config cmake binutils
+            libespeak-ng-dev libasound2-dev
+            libpipewire-0.3-dev mold clang
+            protobuf-compiler
+          version: lsl-e2e-v1
+
+      - name: Run LSL E2E test
+        env:
+          RUSTC_WRAPPER: sccache
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C link-arg=-fuse-ld=mold
+        run: |
+          cargo test -p skill-lsl --locked --target x86_64-unknown-linux-gnu \
+            --test lsl_e2e -- --nocapture 2>&1 | tee lsl-e2e-report.txt
+          exit ${PIPESTATUS[0]}
+
+      - name: Write Job Summary
+        if: always()
+        run: |
+          FILE=lsl-e2e-report.txt
+          [ -f "$FILE" ] || { echo "No report file found" >> "$GITHUB_STEP_SUMMARY"; exit 0; }
+
+          echo "## LSL E2E Integration Test" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          echo '### Report' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          sed -n '/LSL E2E INTEGRATION TEST REPORT/,/^╔/{ /^╔/{ p; d }; p }' "$FILE" \
+            || sed -n '/LSL E2E INTEGRATION TEST REPORT/,/^╚/p' "$FILE" \
+            >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if grep -q 'ALL STEPS PASSED' "$FILE"; then
+            echo "### Result: ALL STEPS PASSED ✅" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Result: SOME STEPS FAILED ❌" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload E2E report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lsl-e2e-report
+          path: lsl-e2e-report.txt
+          retention-days: 30
+
+  # ── Security audit ────────────────────────────────────────────────────────────
+  #
+  # Merged the previous separate cargo-audit + audit jobs into one.
+  # Runs only on main/develop pushes and manual triggers — advisory only,
+  # not worth blocking every PR.
+  audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+    env:
+      RUSTC_WRAPPER: ""
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: npm audit
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install --locked cargo-audit
+
+      - name: cargo audit
+        run: cargo audit --deny warnings
+
+      - name: Install cargo-deny
+        run: cargo install --locked cargo-deny
+
+      - name: cargo deny
+        run: cargo deny check
+
+  # ── Discord notification ──────────────────────────────────────────────────
+  notify:
+    name: Discord notification
+    runs-on: ubuntu-latest
+    needs: [rust-check, windows-check, frontend-check, audit, llm-e2e, lsl-e2e]
+    if: always()
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+      - name: Send CI result to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          COMMIT_MSG=$(git log -1 --format='%s' | head -c 200)
+          RUST="${{ needs.rust-check.result }}"
+          WINDOWS="${{ needs.windows-check.result }}"
+          FRONTEND="${{ needs.frontend-check.result }}"
+          AUDIT="${{ needs.audit.result }}"
+          LLM_E2E="${{ needs.llm-e2e.result }}"
+          LSL_E2E="${{ needs.lsl-e2e.result }}"
+
+          # Determine overall status — Rust (Linux), Windows, and Frontend are
+          # required gates.  Audit and LLM E2E are advisory.
+          if [[ "$RUST" == "success" && "$WINDOWS" == "success" && "$FRONTEND" == "success" ]]; then
+            COLOR=3066993   # green
+            STATUS="✅ Passed"
+          else
+            COLOR=15158332  # red
+            STATUS="❌ Failed"
+          fi
+
+          EMOJI_RUST=$([ "$RUST" = "success" ] && echo "✅" || echo "❌")
+          EMOJI_WINDOWS=$([ "$WINDOWS" = "success" ] && echo "✅" || echo "❌")
+          EMOJI_FRONTEND=$([ "$FRONTEND" = "success" ] && echo "✅" || echo "❌")
+          EMOJI_AUDIT=$([ "$AUDIT" = "success" ] && echo "✅" || ([ "$AUDIT" = "skipped" ] && echo "⏭️" || echo "⚠️"))
+          EMOJI_LLM=$([ "$LLM_E2E" = "success" ] && echo "✅" || ([ "$LLM_E2E" = "skipped" ] && echo "⏭️" || echo "⚠️"))
+          EMOJI_LSL=$([ "$LSL_E2E" = "success" ] && echo "✅" || ([ "$LSL_E2E" = "skipped" ] && echo "⏭️" || echo "⚠️"))
+
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          REF="${{ github.ref_name }}"
+          SHA="${{ github.sha }}"
+          ACTOR="${{ github.actor }}"
+          EVENT="${{ github.event_name }}"
+
+          curl -s -X POST "$DISCORD_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"CI — $STATUS\",
+                \"url\": \"$RUN_URL\",
+                \"color\": $COLOR,
+                \"fields\": [
+                  {\"name\": \"Branch\",    \"value\": \"\`$REF\`\",          \"inline\": true},
+                  {\"name\": \"Commit\",    \"value\": \"\`${SHA:0:8}\`\",    \"inline\": true},
+                  {\"name\": \"Triggered\", \"value\": \"$EVENT by $ACTOR\", \"inline\": true},
+                  {\"name\": \"Commit Message\", \"value\": $(echo "$COMMIT_MSG" | jq -Rs .), \"inline\": false},
+                  {\"name\": \"Rust (Linux+Vulkan)\", \"value\": \"$EMOJI_RUST $RUST\", \"inline\": true},
+                  {\"name\": \"Rust (Windows)\", \"value\": \"$EMOJI_WINDOWS $WINDOWS\", \"inline\": true},
+                  {\"name\": \"Frontend\", \"value\": \"$EMOJI_FRONTEND $FRONTEND\", \"inline\": true},
+                  {\"name\": \"Audit\", \"value\": \"$EMOJI_AUDIT $AUDIT\", \"inline\": true},
+                  {\"name\": \"LLM E2E\", \"value\": \"$EMOJI_LLM $LLM_E2E\", \"inline\": true},
+                  {\"name\": \"LSL E2E\", \"value\": \"$EMOJI_LSL $LSL_E2E\", \"inline\": true}
+                ],
+                \"footer\": {\"text\": \"${{ github.repository }}\"}
+              }]
+            }"

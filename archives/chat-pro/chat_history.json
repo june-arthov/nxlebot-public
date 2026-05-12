@@ -1,0 +1,59 @@
+[
+  {
+    "id": "98dec7f0-c1c3-44db-9434-b9ba05d361c3",
+    "text": "Test UI baru",
+    "is_user": true,
+    "platform": "web",
+    "time": "2026-04-07T13:05:52.725606"
+  },
+  {
+    "id": "6e5af60b-baa4-4db5-a4f0-11ea1eebc9b9",
+    "text": "Gimana UI baru-nya? Lebih oke kan? 😎",
+    "is_user": false,
+    "platform": "web",
+    "time": "2026-04-07T13:05:52.725627"
+  },
+  {
+    "id": "9c403ad3-69a1-427d-8a8c-b1466c4634a9",
+    "text": "Test webhook dari Telegram!",
+    "is_user": true,
+    "platform": "telegram",
+    "user_id": "8621864972",
+    "time": "2026-04-07T13:08:09.901545"
+  },
+  {
+    "id": "d5467853-a755-49b3-9811-4952ff53c985",
+    "text": "Chat kita sync dengan Telegram! Bisa pindah platform tanpa kehilangan history! 🎉",
+    "is_user": false,
+    "platform": "telegram",
+    "time": "2026-04-07T13:08:09.901568"
+  },
+  {
+    "id": "49d7fbdd-f19c-429b-8fae-6b60f9b25345",
+    "text": "oke gak nih?",
+    "is_user": true,
+    "platform": "web",
+    "time": "2026-04-07T13:14:09.928019"
+  },
+  {
+    "id": "0bd0398d-cfb3-4464-ae37-adcfa63a0128",
+    "text": "Siap!",
+    "is_user": false,
+    "platform": "web",
+    "time": "2026-04-07T13:14:09.928085"
+  },
+  {
+    "id": "e1b34cff-b416-4981-baf5-11a22b05da4e",
+    "text": "apanya yang siap",
+    "is_user": true,
+    "platform": "web",
+    "time": "2026-04-07T13:14:22.576157"
+  },
+  {
+    "id": "1bc08814-1b9a-4394-857a-56450ba18929",
+    "text": "Oke bro!",
+    "is_user": false,
+    "platform": "web",
+    "time": "2026-04-07T13:14:22.576280"
+  }
+]

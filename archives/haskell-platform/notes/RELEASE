@@ -1,0 +1,127 @@
+= Timeline =
+
+T-8 weeks
+  * e-mail lists & package maintainers:
+    - announcing timeline for release
+    - requesting package maintainers to suggest stable version for platform
+    - list open issues for list and committee to resolve
+    - solicit new issues
+
+T-6 weeks
+  * publish trial version list
+  * triage trac list
+  * establish open issues (closing call for new ones)
+
+T-4 weeks
+  * rc1 of installers
+
+T-2 weeks
+  * rc2 of installers
+  * last call on open issues w/suggested closings
+
+T-1 weeks
+  * rc3 of installers if needed
+
+T0
+  * release!
+
+
+= Process =
+
+ [] Create a new release in hptool/src/Release20xx.hs
+    [] may have to update hptool/src/Release.hs to include it
+    [] change hpRelease value in hptool/src/Main.hs to use it
+
+ [] Update package versions
+     * Libraries shipped with GHC.
+        http://haskell.org/haskellwiki/Libraries_released_with_GHC
+        -or-
+        from an expanded GHC source package
+          find . -name tests -prune -type f -o  -name '*.cabal'
+            | xargs grep -i version: | grep -v -i cabal-version
+
+        [] update release data in hptool/src/Release20xx.hs
+
+     * External libraries to latest stable version
+        [] update release data in hptool/src/Release20xx.hs
+
+------------------------------------------------------------------------
+= Site =
+
+[] Update release schedule for current and next release on wiki:
+   http://trac.haskell.org/haskell-platform/wiki/ReleaseTimetable
+[] add new data in hptool/src/ReleaseFile.hs for new release files
+
+[] on lambda.haskell.org
+  [] create /var/www/platform/download/<version>
+  [] copy installers there
+  [] create md5sum.txt:
+    md5sum [hH]* > md5sum.txt
+[] update windows.markdown, mac.markdown, and linux.markdown
+  [] update notes
+
+[] make the doc
+  [] from a mac build:
+
+      TARGET=../hp-github/build/target
+      HPDIR=$TARGET/Library/Haskell/ghc-7.8.3-x86_64
+      GHCDIR=$TARGET/Library/Frameworks/GHC.framework/Versions/7.8.3-x86_64
+      mkdir webdoc
+      cd webdoc
+      cp -pr $TARGET/usr/share/doc/ghc/html ghc
+      mkdir platform
+      (cd $HPDIR ; find doc lib/*/doc | cpio -o) | (cd platform ; cpio -idv)
+
+  [] to find errant links:
+      NL=$'\n'
+      MAGICPAT="s/href=[\"']\\/\\([^\"']*\\)[^\"']/\\$NL### \\1\\$NL/g"
+      find . -name '*.html' | xargs cat | sed -e "$MAGICPAT" | grep '^###' | sort -u
+
+       this found
+  [] fix the links:
+
+        in platform/doc/*.html has links to /Library... that need fixing
+
+            /Library/Frameworks/GHC.framework/Versions/7.8.3-x86_64/usr/share/doc/ghc/html
+            --> ../../ghc
+            /Library/Haskell/ghc-7.8.3-x86_64
+            --> ..
+
+
+            cd platform/doc
+            sed  -e 's:/Library/Frameworks/GHC.framework/Versions/7.8.3-x86_64/usr/share/doc/ghc/html:../../ghc:g' -e 's:/Library/Haskell/ghc-7.8.3-x86_64:..:g' -i .bak *.html
+            rm *.bak
+
+        in platform/lib/*/doc/html/*.html has links to /User... that need fixing
+
+            /Users/markl/Projects/A/platform/hp-github/build/ghc-bindist/local/share/doc/ghc/html
+            --> ../../../../../ghc
+
+            /Users/markl/Projects/A/platform/hp-github/build/package/([-_.a-zA-Z0-9]*)/build/dist/doc/html/[-_a-zA-Z0-9]*
+            --> ../../../\1/doc/html
+
+            find platform/lib -name '*.html' | xargs -I '{}' sed -e 's:/Users/markl/Projects/A/platform/hp-github/build/ghc-bindist/local/share/doc/ghc/html:../../../../../ghc:g' -e 's:/Users/markl/Projects/A/platform/hp-github/build/package/\([-_.a-zA-Z0-9]*\)/build/dist/doc/html/[-_a-zA-Z0-9]*:../../../\1/doc/html:g' -i '' '{}'
+
+    [] remove mac stuff from start.html
+    [] retar it back up
+  [] get that tarball onto lambda
+[] update current links on lambda:
+  [] /var/www/platform/docs/current
+  [] /var/www/platform/download/current
+
+
+= Locations =
+
+* web site:
+  lambda.haskell.org
+  /srv/web/haskell.org/platform
+
+* downloads:
+  lambda.haskell.org
+  /var/www/platform/download/<release>
+
+* on-line doc tree:
+  lambda.haskell.org
+  /var/www/platform/doc/<release>
+
+

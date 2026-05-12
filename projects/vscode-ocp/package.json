@@ -1,0 +1,60 @@
+{
+  "name": "ocp-octane",
+  "displayName": "OC+ (Octane) Language Support",
+  "description": "Syntax highlighting, snippets, and live error diagnostics for OC+ (Octane) DSL scripts (.ocp files)",
+  "version": "1.0.0",
+  "publisher": "nxlebot",
+  "icon": "icon.png",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "activationEvents": [
+    "onLanguage:ocp"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "ocp",
+        "aliases": ["OC+", "Octane", "ocp"],
+        "extensions": [".ocp"],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "dark": "./icons/ocp-icon-dark.svg",
+          "light": "./icons/ocp-icon-light.svg"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ocp",
+        "scopeName": "source.ocp",
+        "path": "./syntaxes/ocp.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "ocp",
+        "path": "./snippets/ocp.json"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.60.0",
+    "typescript": "^5.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nxelleai/ocp-octane-vscode"
+  },
+  "license": "MIT"
+}

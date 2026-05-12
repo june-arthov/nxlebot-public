@@ -1,0 +1,6 @@
+#!/bin/bash
+# Nxlebot Groq CLI Launcher
+# Usage: nxl-groq [message]
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+python3 "$SCRIPT_DIR/groq_client.py" "$@"

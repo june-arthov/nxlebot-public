@@ -1,0 +1,19 @@
+{
+    "name": "SpatialSys.UnitySDK.VisualScripting",
+    "rootNamespace": "SpatialSys.UnitySDK.VisualScripting",
+    "references": [
+        "Unity.VisualScripting.Core",
+        "Unity.VisualScripting.Flow",
+        "Unity.VisualScripting.State",
+        "SpatialSys.UnitySDK"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

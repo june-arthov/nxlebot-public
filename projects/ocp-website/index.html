@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OC+ — Serverless Scripting, No Bullshit</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-canvas: #08090a;
+      --bg-panel: #0f1011;
+      --bg-surface: #191a1b;
+      --bg-hover: #232425;
+      --text-primary: #f7f8f8;
+      --text-secondary: #d0d6e0;
+      --text-muted: #8a8f98;
+      --text-subtle: #62666d;
+      --accent: #3ecf8e;
+      --accent-hover: #2dd47a;
+      --accent-soft: rgba(62, 207, 142, 0.10);
+      --accent-glow: rgba(62, 207, 142, 0.20);
+      --border-standard: rgba(255,255,255,0.08);
+      --border-subtle: rgba(255,255,255,0.05);
+      --border-light: rgba(255,255,255,0.12);
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --radius-xl: 16px;
+      --radius-pill: 9999px;
+      --shadow-focus: 0 0 0 2px rgba(62, 207, 142, 0.25);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      font-weight: 400;
+      background: var(--bg-canvas);
+      color: var(--text-primary);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── NAV ── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      background: rgba(8, 9, 10, 0.85);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    nav .inner {
+      max-width: 1200px; margin: 0 auto;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 24px;
+    }
+    .logo { display: flex; align-items: center; gap: 10px; }
+    .logo svg { width: 32px; height: 32px; }
+    .logo span { font-size: 18px; font-weight: 600; color: var(--text-primary); letter-spacing: -0.3px; }
+    .nav-links { display: flex; gap: 32px; align-items: center; }
+    .nav-links a { color: var(--text-secondary); font-size: 14px; font-weight: 500; text-decoration: none; transition: color .15s; }
+    .nav-links a:hover { color: var(--text-primary); }
+    .btn-nav {
+      background: var(--bg-surface);
+      color: var(--text-primary);
+      border: 1px solid var(--border-standard);
+      padding: 8px 16px;
+      border-radius: var(--radius-pill);
+      font-size: 14px; font-weight: 500;
+      cursor: pointer;
+      transition: all .15s;
+      text-decoration: none; display: inline-block;
+    }
+    .btn-nav:hover { background: var(--bg-hover); border-color: var(--border-light); }
+
+    /* ── HERO ── */
+    .hero {
+      max-width: 1200px; margin: 0 auto;
+      padding: 160px 24px 100px;
+      text-align: center;
+    }
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: var(--accent-soft); border: 1px solid rgba(62, 207, 142, 0.15);
+      padding: 6px 16px; border-radius: var(--radius-pill);
+      font-size: 13px; font-weight: 500; color: var(--accent);
+      margin-bottom: 32px;
+    }
+    .hero-badge .dot { width: 6px; height: 6px; background: var(--accent); border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .hero h1 {
+      font-size: clamp(36px, 6vw, 64px);
+      font-weight: 600;
+      line-height: 1.05;
+      letter-spacing: -1.5px;
+      color: var(--text-primary);
+      margin-bottom: 24px;
+    }
+    .hero h1 .green { color: var(--accent); }
+    .hero p {
+      font-size: 18px; color: var(--text-muted);
+      max-width: 620px; margin: 0 auto 40px;
+      line-height: 1.65;
+    }
+    .hero-ctas { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .btn-primary {
+      background: var(--accent); color: #08090a;
+      padding: 12px 28px; border-radius: var(--radius-pill);
+      font-size: 15px; font-weight: 600;
+      text-decoration: none; border: none; cursor: pointer;
+      transition: all .15s;
+      box-shadow: 0 0 24px rgba(62, 207, 142, 0.15);
+    }
+    .btn-primary:hover { background: var(--accent-hover); box-shadow: 0 0 32px rgba(62, 207, 142, 0.25); transform: translateY(-1px); }
+    .btn-secondary {
+      background: var(--bg-surface); color: var(--text-primary);
+      border: 1px solid var(--border-standard);
+      padding: 12px 28px; border-radius: var(--radius-pill);
+      font-size: 15px; font-weight: 500;
+      text-decoration: none; cursor: pointer;
+      transition: all .15s;
+    }
+    .btn-secondary:hover { background: var(--bg-hover); border-color: var(--border-light); }
+
+    /* ── CODE WINDOW ── */
+    .code-showcase {
+      max-width: 800px; margin: 0 auto 120px; padding: 0 24px;
+    }
+    .code-window {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-standard);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: 0 0 60px rgba(62, 207, 142, 0.04);
+    }
+    .code-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 14px 16px;
+      background: rgba(255,255,255,0.02);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .code-header .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .code-header .dot.red { background: #ff5f56; }
+    .code-header .dot.yellow { background: #ffbd2e; }
+    .code-header .dot.green-dot { background: #27c93f; }
+    .code-header .file { margin-left: 12px; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-subtle); }
+    .code-body {
+      padding: 24px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px; line-height: 1.75;
+      color: var(--text-secondary);
+      overflow-x: auto;
+    }
+    .code-body .kw { color: #c792ea; }
+    .code-body .fn { color: var(--accent); }
+    .code-body .str { color: #ecc48d; }
+    .code-body .var { color: #82aaff; }
+    .code-body .cmt { color: var(--text-subtle); font-style: italic; }
+
+    /* ── SECTIONS ── */
+    section { padding: 100px 24px; }
+    .section-inner { max-width: 1200px; margin: 0 auto; }
+    .section-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px; text-transform: uppercase;
+      letter-spacing: 1.5px; color: var(--accent);
+      margin-bottom: 16px;
+    }
+    section h2 {
+      font-size: 36px; font-weight: 600;
+      letter-spacing: -0.8px; color: var(--text-primary);
+      margin-bottom: 16px;
+    }
+    section .sub {
+      font-size: 17px; color: var(--text-muted);
+      max-width: 600px; margin-bottom: 48px;
+      line-height: 1.6;
+    }
+
+    /* ── FEATURES ── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+    .feature-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-standard);
+      border-radius: var(--radius-lg);
+      padding: 28px;
+      transition: all .2s;
+    }
+    .feature-card:hover { border-color: var(--border-light); background: var(--bg-surface); }
+    .feature-icon {
+      width: 40px; height: 40px;
+      background: var(--accent-soft);
+      border-radius: var(--radius-md);
+      display: flex; align-items: center; justify-content: center;
+      margin-bottom: 20px;
+    }
+    .feature-icon svg { width: 20px; height: 20px; stroke: var(--accent); }
+    .feature-card h3 { font-size: 17px; font-weight: 600; margin-bottom: 8px; color: var(--text-primary); }
+    .feature-card p { font-size: 14px; color: var(--text-muted); line-height: 1.55; }
+
+    /* ── USE CASES ── */
+    .usecases { background: var(--bg-panel); border-top: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); }
+    .usecases-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 12px;
+    }
+    .usecase-item {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      transition: all .15s;
+    }
+    .usecase-item:hover { border-color: var(--accent-glow); }
+    .usecase-item h4 { font-size: 15px; font-weight: 600; color: var(--text-primary); margin-bottom: 6px; }
+    .usecase-item p { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+
+    /* ── PRICING ── */
+    .pricing-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .plan {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-standard);
+      border-radius: var(--radius-lg);
+      padding: 32px;
+      text-align: center;
+    }
+    .plan.featured { border-color: var(--accent); box-shadow: 0 0 48px rgba(62, 207, 142, 0.06); }
+    .plan .price { font-size: 40px; font-weight: 700; letter-spacing: -1px; color: var(--text-primary); margin: 16px 0 8px; }
+    .plan .period { font-size: 14px; color: var(--text-muted); }
+    .plan ul { list-style: none; margin: 24px 0; text-align: left; }
+    .plan ul li { padding: 8px 0; font-size: 14px; color: var(--text-secondary); border-bottom: 1px solid var(--border-subtle); }
+    .plan ul li::before { content: "→ "; color: var(--accent); font-weight: 700; }
+    .plan .btn-primary { display: inline-block; margin-top: 16px; width: 100%; text-align: center; }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--border-subtle);
+      padding: 48px 24px; text-align: center;
+    }
+    footer p { font-size: 13px; color: var(--text-subtle); }
+    footer a { color: var(--text-muted); text-decoration: none; }
+    footer a:hover { color: var(--accent); }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 768px) {
+      .nav-links { display: none; }
+      .hero { padding: 120px 20px 60px; }
+      section { padding: 60px 20px; }
+      section h2 { font-size: 28px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav>
+    <div class="inner">
+      <div class="logo">
+        <svg viewBox="0 0 32 32" fill="none">
+          <rect width="32" height="32" rx="8" fill="rgba(62,207,142,0.12)"/>
+          <path d="M8 16L12 20L20 12" stroke="#3ecf8e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M14 10L22 10L22 18" stroke="#3ecf8e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>OC+</span>
+      </div>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#usecases">Use Cases</a>
+        <a href="#pricing">Pricing</a>
+        <a href="https://github.com/june-arthov/OC-" target="_blank">GitHub</a>
+        <a href="#start" class="btn-nav">Start Building →</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <div class="hero" id="start">
+    <div class="hero-badge"><span class="dot"></span> Now in Private Beta</div>
+    <h1>Script Your Infrastructure<br>with <span class="green">OC+</span></h1>
+    <p>A brutally simple DSL for automation. Deploy apps, monitor servers, sync repos — all from a single script. No YAML hell, no boilerplate.</p>
+    <div class="hero-ctas">
+      <a href="https://github.com/june-arthov/OC-" class="btn-primary" target="_blank">View on GitHub</a>
+      <a href="#features" class="btn-secondary">How It Works</a>
+    </div>
+  </div>
+
+  <!-- CODE SHOWCASE -->
+  <div class="code-showcase">
+    <div class="code-window">
+      <div class="code-header">
+        <span class="dot red"></span><span class="dot yellow"></span><span class="dot green-dot"></span>
+        <span class="file">deploy.ocp</span>
+      </div>
+      <div class="code-body">
+<span class="cmt"># Deploy to staging with health check + rollback</span>
+<span class="kw">SET</span> <span class="var">APP</span>  <span class="str">"my-api"</span>
+<span class="kw">SET</span> <span class="var">PORT</span> <span class="str">"3000"</span>
+
+<span class="kw">LOG</span> <span class="str">"▸ Pushing to staging..."</span>
+<span class="kw">RUN</span> <span class="fn">git push staging main</span>
+
+<span class="kw">LOG</span> <span class="str">"▸ Health check..."</span>
+<span class="kw">TRY</span>
+    <span class="kw">FOR</span> <span class="var">i</span> 1 5
+        <span class="kw">RUN</span> <span class="fn">curl -sf https://{APP}.staging:{PORT}/health</span>
+        <span class="kw">SET</span> <span class="var">RESULT</span>  <span class="str">"OK"</span>
+    <span class="kw">END</span>
+<span class="kw">CATCH</span>
+    <span class="kw">LOG</span> <span class="str">"✗ Health failed. Rolling back..."</span>
+    <span class="kw">RUN</span> <span class="fn">git revert HEAD --no-edit</span>
+    <span class="kw">RUN</span> <span class="fn">git push staging main</span>
+<span class="kw">END</span>
+
+<span class="kw">LOG</span> <span class="str">"✓ Deploy complete — {APP} is live!"</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- FEATURES -->
+  <section id="features">
+    <div class="section-inner">
+      <div class="section-label">Features</div>
+      <h2>Why OC+?</h2>
+      <p class="sub">Built for devs who want automation that just works — no ceremony, no complexity.</p>
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M13 2L3 14h7l-2 8 10-12h-7l2-8z" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <h3>7 Keywords, Infinite Power</h3>
+          <p>Full language in 7 keywords: RUN, SET, LOG, IF, FOR, TRY, CATCH. Zero learning curve.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="3" stroke-width="1.5"/><path d="M3 9h18M9 3v18" stroke-width="1.5"/></svg>
+          </div>
+          <h3>Docker Sandbox</h3>
+          <p>Scripts run in isolated containers. Read-only FS, no network by default, no shell injection.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M22 12h-4l-3 9L9 3l-3 9H2" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <h3>Built-in Retry & Recovery</h3>
+          <p>TRY/CATCH blocks + FOR loops for retry logic. Handle failures gracefully.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" stroke-width="1.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </div>
+          <h3>Telegram Integration</h3>
+          <p>Deliver script output directly to Telegram. Perfect for cron jobs and monitoring.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke-width="1.5"/><path d="M12 6v6l4 2" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </div>
+          <h3>Cron-Native</h3>
+          <p>Schedule scripts as cron jobs. System reports, git sync, Docker cleanup — automated.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <h3>Open Source</h3>
+          <p>MIT licensed. The DSL interpreter is free. The cloud platform is optional.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- USE CASES -->
+  <section class="usecases" id="usecases">
+    <div class="section-inner">
+      <div class="section-label">Use Cases</div>
+      <h2>What can you build?</h2>
+      <p class="sub">From personal automation to production pipelines.</p>
+      <div class="usecases-grid">
+        <div class="usecase-item">
+          <h4>🔁 Git Auto-Sync</h4>
+          <p>Pull latest from all repos every 6 hours, notify via Telegram if conflicts.</p>
+        </div>
+        <div class="usecase-item">
+          <h4>📊 System Monitor</h4>
+          <p>Hourly disk/memory/load reports. Alert when thresholds crossed.</p>
+        </div>
+        <div class="usecase-item">
+          <h4>🚀 Staging Deploy</h4>
+          <p>Push, health check, rollback on failure. One script from commit to live.</p>
+        </div>
+        <div class="usecase-item">
+          <h4>🗄️ Database Backup</h4>
+          <p>Dump PostgreSQL, compress, upload to S3. Retry on network failure.</p>
+        </div>
+        <div class="usecase-item">
+          <h4>🐳 Docker Janitor</h4>
+          <p>Weekly prune unused images, containers, volumes. Keep disk clean.</p>
+        </div>
+        <div class="usecase-item">
+          <h4>🤖 Telegram Bot Cmd</h4>
+          <p>Run OC+ scripts from Telegram. `/deploy`, `/status`, `/backup` in chat.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PRICING -->
+  <section id="pricing">
+    <div class="section-inner">
+      <div class="section-label">Pricing</div>
+      <h2>Simple, transparent.</h2>
+      <p class="sub">Use the interpreter for free. Pay only for the cloud.</p>
+      <div class="pricing-grid">
+        <div class="plan">
+          <h3 style="font-size:18px;font-weight:600">OSS</h3>
+          <div class="price">Free</div>
+          <div class="period">forever</div>
+          <ul>
+            <li>Full OC+ interpreter</li>
+            <li>Local execution</li>
+            <li>MIT license</li>
+            <li>GitHub community</li>
+          </ul>
+          <a href="https://github.com/june-arthov/OC-" class="btn-secondary" style="display:block;text-align:center;margin-top:16px;text-decoration:none;" target="_blank">Star on GitHub</a>
+        </div>
+        <div class="plan featured">
+          <h3 style="font-size:18px;font-weight:600">Cloud Beta</h3>
+          <div class="price">$5<span style="font-size:16px;color:var(--text-muted)">/mo</span></div>
+          <div class="period">limited beta</div>
+          <ul>
+            <li>100 executions/month</li>
+            <li>Docker sandbox</li>
+            <li>Telegram delivery</li>
+            <li>Cron scheduling</li>
+            <li>Execution history</li>
+          </ul>
+          <a href="https://t.me/milkvybot" class="btn-primary" target="_blank">Join Beta</a>
+        </div>
+        <div class="plan">
+          <h3 style="font-size:18px;font-weight:600">Pro</h3>
+          <div class="price">$15<span style="font-size:16px;color:var(--text-muted)">/mo</span></div>
+          <div class="period">coming soon</div>
+          <ul>
+            <li>1000 executions/month</li>
+            <li>Priority sandbox</li>
+            <li>Multi-channel delivery</li>
+            <li>Custom scripts storage</li>
+            <li>Team sharing</li>
+          </ul>
+          <a href="#" class="btn-secondary" style="display:block;text-align:center;margin-top:16px;text-decoration:none;opacity:0.5">Waitlist</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer>
+    <p>OC+ is <a href="https://github.com/june-arthov/OC-" target="_blank">open source</a> under MIT. Built by <a href="https://t.me/milkvybot" target="_blank">MilkV</a>.</p>
+    <p style="margin-top:8px">© 2026 Octane Cloud. No bullshit.</p>
+  </footer>
+
+</body>
+</html>

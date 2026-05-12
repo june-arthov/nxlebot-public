@@ -1,0 +1,186 @@
+# ── Workspace-level Cargo configuration ────────────────────────────────────────
+#
+# Moved from src-tauri/.cargo/config.toml to the workspace root so that all
+# workspace members share the same build configuration.
+#
+# `relative = true` paths are resolved relative to this file's parent
+# directory (the project root).
+
+# ── Default build target ──────────────────────────────────────────────────────
+#
+# cargo's [build] section has no per-host-OS conditionals, so a hardcoded
+# `target = "aarch64-apple-darwin"` here would break Windows / Linux builds
+# ("can't find crate for `core`").
+#
+# Platform default is therefore left as the host triple.  Per-platform
+# targeting is handled at two levels:
+#
+#   1. npm / Tauri builds (recommended):
+#        npm run tauri:build          ← auto-selects target via scripts/tauri-build.js
+#        macOS  → --target aarch64-apple-darwin
+#        Windows/Linux → host triple (no --target flag)
+#
+#   2. Raw `cargo` on macOS:
+#        Either pass --target aarch64-apple-darwin explicitly, or let direnv
+#        source the repo-root .envrc which exports CARGO_BUILD_TARGET for you.
+#
+# ── Windows build prerequisite: LLVM / libclang ───────────────────────────────
+#
+# llama-cpp-sys uses bindgen to generate Rust↔C bindings at build time.
+# bindgen requires libclang.dll, which ships with the LLVM toolchain.
+#
+# One-time setup (run once, then restart your terminal):
+#
+#   winget install LLVM.LLVM
+#
+#   # Then add to your user environment (PowerShell):
+#   [System.Environment]::SetEnvironmentVariable(
+#       "LIBCLANG_PATH", "C:\Program Files\LLVM\bin", "User")
+#
+# Without this, cargo build fails with:
+#   "Unable to find libclang: couldn't find any valid shared libraries
+#    matching: ['clang.dll', 'libclang.dll']"
+#
+# LIBCLANG_PATH is intentionally NOT set here because the path is
+# installation-dependent and force=true would break machines where LLVM
+# lives elsewhere.  Set it in your system/user environment variables instead.
+
+[build]
+# target intentionally omitted — defaults to the host triple
+#
+# ── Shared target directory ───────────────────────────────────────────────────
+#
+# All workspace members compile into src-tauri/target/.  This keeps the
+# binary output where the Tauri CLI and build scripts (tauri-build.js,
+# assemble-macos-app.sh, etc.) expect it, and avoids the multi-GB
+# duplication that occurred when individual crates had their own target/.
+target-dir = "src-tauri/target"
+#
+# ── Build caching (sccache) ───────────────────────────────────────────────────
+#
+# sccache caches both rustc and C/C++ compilation outputs, dramatically
+# speeding up clean rebuilds (6 min → ~2m45s on a typical full build).
+#
+# We enable it workspace-wide here so ad-hoc cargo commands (`cargo build`,
+# `cargo clippy`, `cargo test`) benefit too, not only hooks/build scripts.
+#
+# Prerequisite: install sccache (`cargo install sccache` or `brew install sccache`).
+# If not installed, cargo will fail with "No such file or directory" for
+# rustc-wrapper.
+rustc-wrapper = "sccache"
+
+[env]
+# Dynamic CRT for cmake-based -sys crates (llama-cpp-sys, etc.).
+# Several native dependencies (DirectML, ONNX Runtime, Vulkan loader) ship
+# as pre-built DLLs linked against the dynamic CRT (/MD).  Mixing /MT and
+# /MD in the same process causes heap corruption and "side-by-side
+# configuration is incorrect" errors.  Using /MD everywhere is consistent
+# and the NSIS installer bundles the VC++ Redistributable DLLs app-locally
+# so end users don't need a separate install.
+# On non-Windows platforms cmake ignores this variable.
+CMAKE_MSVC_RUNTIME_LIBRARY = "MultiThreadedDLL"
+
+# ── macOS deployment target ───────────────────────────────────────────────────
+#
+# llama.cpp uses std::filesystem (fs::path / fs::u8path) which was introduced
+# in macOS 10.15.  Xcode 26+ enforces availability annotations strictly, so
+# building against an older deployment target produces hard errors like:
+#   "'path' is unavailable: introduced in macOS 10.15"
+#
+# Two separate knobs are needed:
+#
+#   MACOSX_DEPLOYMENT_TARGET
+#     Read by the `cc` crate to generate -mmacosx-version-min in
+#     CMAKE_C_FLAGS / CMAKE_CXX_FLAGS (passed by cmake-0.1.57).
+#
+#   CMAKE_OSX_DEPLOYMENT_TARGET
+#     llama-cpp-sys-2/build.rs forwards all CMAKE_* env vars directly to
+#     cmake configure via config.define(key, value).  cmake then appends
+#     its own -mmacosx-version-min=10.15 AFTER CMAKE_C_FLAGS, so Clang's
+#     "last flag wins" rule overrides the 10.13 baked into CMAKE_C_FLAGS.
+#
+# force=true is required so that a system-level MACOSX_DEPLOYMENT_TARGET
+# (e.g. set by Xcode to 10.13) cannot silently override these values.
+#
+# ⚠️  After changing either value you MUST delete the stale cmake cache:
+#     rm -rf src-tauri/target/release/build/llama-cpp-sys-2-*/
+# The cmake crate skips reconfiguration when CMakeCache.txt exists, so the old
+# min-version flags stay baked in until the cache directory is removed.
+MACOSX_DEPLOYMENT_TARGET    = { value = "10.15", force = true }
+CMAKE_OSX_DEPLOYMENT_TARGET = { value = "10.15", force = true }
+
+# ── macOS: increase main-thread stack size ────────────────────────────────────
+#
+# macOS defaults to an 8 MB main-thread stack.  The Tauri `run()` function
+# has an enormous frame because `generate_handler!` expands ~150 command
+# handlers inline, plus the setup/run closures, `AppState::default()`, and
+# deep generics from serde / HNSW / llama.cpp.  8 MB is not enough.
+#
+# The stack-size flag is emitted from build.rs via `cargo:rustc-link-arg-bins`
+# so it only applies to the final executable, NOT to the lib crate (ld64
+# rejects `-stack_size` on dylibs).  See build.rs for the actual value.
+#
+# NOTE: [target.aarch64-apple-darwin] and [target.x86_64-apple-darwin]
+# sections are intentionally absent here because macOS needs no target-wide
+# rustflags.  The stack size is handled exclusively by build.rs.
+
+# ── Linux: fast linker (mold) ─────────────────────────────────────────────────
+#
+# mold is a drop-in replacement for ld/lld that is significantly faster for
+# large binaries.  When mold + clang are installed, scripts/tauri-build.js
+# automatically sets CARGO_TARGET_*_LINKER and CARGO_TARGET_*_RUSTFLAGS
+# environment variables so cargo uses mold without hardcoding it here.
+#
+# Do NOT hardcode [target.*-unknown-linux-gnu] linker/rustflags here — it
+# breaks builds for developers who don't have mold or clang installed.
+#
+# Install (Debian/Ubuntu): sudo apt install mold clang
+# Install (Fedora):        sudo dnf install mold clang
+# Install (Arch):          sudo pacman -S mold clang
+# Install (macOS):         not needed — Apple's ld is already fast
+
+# ── Windows MSVC: increase main-thread stack size ────────────────────────────
+#
+# Windows allocates only 1 MB of stack to the main thread by default (vs 8 MB
+# on macOS / Linux).  The Tauri + llama.cpp initialisation path uses enough
+# stack (serde, HNSW, deep generics) to hit the guard page and produce a
+# STATUS_STACK_OVERFLOW (0xC00000FD) crash before any window is shown.
+#
+# /STACK:<reserve>[,<commit>]  — PE header stack reservation.
+#   reserve = 8 MB  (8 * 1024 * 1024 = 8388608)
+#   commit  = 64 KB (default; pages are committed lazily, so this is fine)
+#
+# The flag is passed through -C link-args so it works without a separate
+# .cargo/config linker directive.  It only affects the main thread; worker
+# threads set their own size via std::thread::Builder::stack_size.
+# ── Windows MSVC: fast linker (lld-link) ─────────────────────────────────────
+#
+# lld-link is LLVM's drop-in replacement for MSVC's link.exe.  It is
+# significantly faster for large Rust projects (the Windows release build
+# spends most of its time linking).  When LLVM is installed (winget or CI),
+# lld-link.exe is available in the LLVM bin directory.
+#
+# The linker is set via CARGO_TARGET_*_LINKER in the CI workflow and in
+# tauri-build.js (auto-detected).  Do NOT hardcode it here because it
+# breaks builds for developers who don't have LLVM installed — they
+# fall back to the default MSVC link.exe which always works.
+#
+# Install: winget install LLVM.LLVM
+
+# Dynamic CRT: the binary links against vcruntime140.dll / msvcp140.dll.
+# The NSIS installer bundles these DLLs app-locally (in $INSTDIR alongside
+# skill.exe) so users don't need the VC++ Redistributable pre-installed.
+# The installer also offers to download the full VC++ Redist as a fallback.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-args=/STACK:8388608"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "link-args=/STACK:8388608"]
+
+# ── Windows MinGW (x86_64-pc-windows-gnu): MinGW bash build script ────────────
+#
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-args=-Wl,--stack,8388608"]
+
+[target.i686-pc-windows-gnu]
+rustflags = ["-C", "link-args=-Wl,--stack,8388608"]

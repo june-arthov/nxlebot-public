@@ -1,0 +1,9 @@
+/target
+error.log
+/src/.tldr/
+.tldr/
+/.leann/
+.agents/.skill-lock.json
+.playwright-cli/
+.tldrignore
+.cflx/acceptance-state.json

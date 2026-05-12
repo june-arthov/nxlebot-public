@@ -1,0 +1,1170 @@
+name: Release — Windows
+
+# Triggered by the same semver tag as the macOS and Linux release workflows.
+# All three run in parallel; each uploads its own binaries and then merges
+# its platform entry into the shared latest.json updater manifest.
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'CI test only — build but skip release upload'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write   # create/update GitHub Releases and upload assets
+
+# Opt into Node.js 24 now — same rationale as ci.yml.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  release-windows:
+    name: Build & Release — x86_64-pc-windows-msvc
+    runs-on: windows-latest
+    environment: ${{ inputs.dry_run && 'CI-Test' || 'Release' }}
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Validate Windows app manifest
+        shell: bash
+        run: python scripts/check_windows_manifest.py src-tauri/manifest.xml
+
+      # ── Resolve version ─────────────────────────────────────────────────────
+      # Tag push: verify tag matches tauri.conf.json.
+      # workflow_dispatch: read version from tauri.conf.json directly.
+      - name: Resolve version
+        id: version_meta
+        shell: bash
+        run: |
+          DRY_RUN="${{ inputs.dry_run || 'false' }}"
+          CONF_VERSION=$(
+            grep '"version"' src-tauri/tauri.conf.json \
+            | head -1 \
+            | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/'
+          )
+
+          if [ "$DRY_RUN" = "true" ]; then
+            VERSION="$CONF_VERSION"
+            TAG="v$VERSION"
+            echo "[dry-run] Using version from tauri.conf.json: $VERSION"
+          else
+            TAG="${{ github.ref_name }}"
+            VERSION="${TAG#v}"
+            if [ "$VERSION" != "$CONF_VERSION" ]; then
+              echo "::error::Tag version ($VERSION) does not match" \
+                   "tauri.conf.json version ($CONF_VERSION)."
+              echo "::error::Bump the version in src-tauri/tauri.conf.json and" \
+                   "src-tauri/Cargo.toml, then re-tag."
+              exit 1
+            fi
+            echo "[ok] Version verified: $VERSION"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
+          echo "dry_run=$DRY_RUN" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "TAG=$TAG"         >> "$GITHUB_ENV"
+
+      # ── MSVC developer environment ────────────────────────────────────────────
+      # Puts cl.exe, link.exe, lib.exe, and signtool.exe in PATH.
+      # Required for the espeak-ng static library build (lib.exe) and for
+      # Tauri's Windows code-signing step (signtool.exe).
+      - name: Set up MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Validate Windows app manifest with mt.exe
+        shell: powershell
+        run: |
+          $mt = Get-Command mt.exe -ErrorAction SilentlyContinue
+          if (-not $mt) {
+            Write-Error "mt.exe not found in PATH"
+            exit 1
+          }
+          & $mt.Source -nologo -manifest src-tauri/manifest.xml -validate_manifest
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "mt.exe manifest validation failed"
+            exit $LASTEXITCODE
+          }
+          Write-Host "[ok] mt.exe manifest validation passed"
+
+      # ── Remove Git's link.exe and tar.exe ────────────────────────────────────
+      # Git for Windows prepends C:\Program Files\Git\usr\bin to PATH at every
+      # step via $GITHUB_PATH (re-applied each step, so runtime PATH changes
+      # don't survive — only direct file deletion works).  Two binaries cause
+      # problems:
+      #
+      #   link.exe — Unix hard-link utility; shadows MSVC's linker, producing
+      #              "extra operand" build errors.
+      #   tar.exe  — GNU tar used by actions/cache with --posix, which strips
+      #              or corrupts non-POSIX Windows paths in the saved archive,
+      #              breaking cache restores.  Deleting it forces the use of
+      #              C:\Windows\System32\tar.exe (built-in bsdtar 3.x).
+      - name: Remove Git's link.exe and tar.exe (shadow MSVC linker / corrupt cache)
+        shell: powershell
+        run: |
+          foreach ($bin in @("link.exe", "tar.exe")) {
+            $path = "C:\Program Files\Git\usr\bin\$bin"
+            if (Test-Path $path) {
+              Remove-Item $path -Force
+              Write-Host "[ok] Deleted $path"
+            } else {
+              Write-Host "[skip] $path not found"
+            }
+          }
+
+      # ── Rust toolchain ────────────────────────────────────────────────────────
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      # ── Cargo cache ───────────────────────────────────────────────────────────
+      - name: Cache Cargo registry + build artifacts
+        uses: Swatinem/rust-cache@v2.9.0
+        with:
+          workspaces: ". -> src-tauri/target"
+          shared-key: windows-release-x86_64-msvc-v2
+          # Save cache even when the job fails (e.g. a post-build step
+          # errors out).  Without this, a late-stage failure means the
+          # 57-min compile output is discarded and the next run starts
+          # from scratch — a vicious cycle.
+          save-if: "always()"
+          # Don't cache final compiled artifacts — registry + incremental
+          # data is enough; target/ artifacts recompile quickly from it.
+          cache-targets: false
+          cache-on-failure: false
+
+      # ── ONNX Runtime (official binaries) ───────────────────────────────────
+      # Use the official Microsoft release archive instead of relying on
+      # ort-sys CDN downloads. This makes Windows release builds deterministic
+      # and ensures onnxruntime.dll is available for packaging.
+      - name: Cache ONNX Runtime (Windows x64)
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.USERPROFILE }}\.cache\onnxruntime
+          key: windows-onnxruntime-1.23.2-x64
+
+      - name: Install ONNX Runtime (Windows x64) + export ORT env
+        shell: powershell
+        run: |
+          $OrtVersion = "1.23.2"
+          $OrtBase = Join-Path $env:USERPROFILE ".cache\onnxruntime"
+          $OrtRoot = Join-Path $OrtBase ("onnxruntime-win-x64-" + $OrtVersion)
+          $OrtDll = Join-Path $OrtRoot "lib\onnxruntime.dll"
+          $OrtLib = Join-Path $OrtRoot "lib\onnxruntime.lib"
+
+          if (-not ((Test-Path $OrtDll) -and (Test-Path $OrtLib))) {
+            New-Item -ItemType Directory -Force -Path $OrtBase | Out-Null
+            $ZipPath = Join-Path $env:RUNNER_TEMP "onnxruntime-win-x64.zip"
+            $Url = "https://github.com/microsoft/onnxruntime/releases/download/v$OrtVersion/onnxruntime-win-x64-$OrtVersion.zip"
+
+            $ok = $false
+            for ($i = 1; $i -le 8; $i++) {
+              try {
+                Invoke-WebRequest -Uri $Url -OutFile $ZipPath
+                $ok = $true
+                break
+              } catch {
+                if ($i -eq 8) { throw }
+                Start-Sleep -Seconds 2
+              }
+            }
+            if (-not $ok) {
+              Write-Error "Failed to download ONNX Runtime after retries"
+              exit 1
+            }
+
+            Remove-Item -Recurse -Force $OrtRoot -ErrorAction SilentlyContinue
+            Expand-Archive -Path $ZipPath -DestinationPath $OrtBase -Force
+          }
+
+          if (-not ((Test-Path $OrtDll) -and (Test-Path $OrtLib))) {
+            Write-Error "ONNX Runtime files missing: $OrtDll / $OrtLib"
+            exit 1
+          }
+
+          "ORT_LIB_LOCATION=$OrtRoot\lib" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ORT_PREFER_DYNAMIC_LINK=1" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PATH=$OrtRoot\lib;$OrtRoot\bin;$env:PATH" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          Write-Host "[ok] ORT_LIB_LOCATION=$OrtRoot\lib"
+
+      # ── Build cache (sccache) ─────────────────────────────────────────────────
+      - name: Setup sccache
+        uses: Mozilla-Actions/sccache-action@v0.0.9
+
+      - name: Configure sccache for GitHub Actions cache
+        shell: bash
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+          echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
+          # Version the sccache GHA cache so it can be busted manually by
+          # incrementing this value (e.g. after a toolchain or LLVM upgrade).
+          echo "SCCACHE_GHA_VERSION=2" >> "$GITHUB_ENV"
+
+          # ── Fix sccache PATH on Windows ─────────────────────────────────────
+          # sccache-action v0.0.9 on Windows fails to add the sccache directory
+          # to the Windows Path variable.  Git Bash can find sccache via the
+          # Unix-style PATH (prepended by GITHUB_PATH), but native Windows
+          # processes like cargo.exe cannot.  This means RUSTC_WRAPPER=sccache
+          # silently fails — cargo never routes compilations through sccache.
+          #
+          # Fix: resolve the sccache binary to its full Windows path and export
+          # RUSTC_WRAPPER as the absolute path so cargo.exe finds it directly,
+          # regardless of PATH resolution.
+          if [ -n "${SCCACHE_PATH:-}" ]; then
+            # SCCACHE_PATH is set by the action (e.g. C:\...\x64/sccache)
+            # — may have mixed separators and no .exe extension.  Resolve
+            # to the actual .exe on disk.
+            SCCACHE_DIR="$(dirname "$SCCACHE_PATH")"
+            if [ -f "$SCCACHE_DIR/sccache.exe" ]; then
+              # Convert to native Windows path for cargo.exe
+              SCCACHE_NATIVE="$(cygpath -w "$SCCACHE_DIR/sccache.exe")"
+              echo "RUSTC_WRAPPER=$SCCACHE_NATIVE" >> "$GITHUB_ENV"
+              echo "[ok] RUSTC_WRAPPER=$SCCACHE_NATIVE"
+              # Also add the directory to GITHUB_PATH so cmake and other
+              # native tools can find sccache by bare name.
+              echo "$SCCACHE_DIR" >> "$GITHUB_PATH"
+              echo "[ok] Added $SCCACHE_DIR to GITHUB_PATH"
+            elif [ -f "$SCCACHE_PATH.exe" ]; then
+              SCCACHE_NATIVE="$(cygpath -w "$SCCACHE_PATH.exe")"
+              echo "RUSTC_WRAPPER=$SCCACHE_NATIVE" >> "$GITHUB_ENV"
+              echo "[ok] RUSTC_WRAPPER=$SCCACHE_NATIVE"
+              SCCACHE_DIR2="$(dirname "$SCCACHE_PATH.exe")"
+              echo "$SCCACHE_DIR2" >> "$GITHUB_PATH"
+              echo "[ok] Added $SCCACHE_DIR2 to GITHUB_PATH"
+            else
+              echo "[warn] sccache binary not found at expected paths"
+              echo "[warn]   SCCACHE_PATH=$SCCACHE_PATH"
+              echo "[warn]   SCCACHE_DIR=$SCCACHE_DIR"
+              ls -la "$SCCACHE_DIR"/ 2>/dev/null || true
+            fi
+          else
+            echo "[warn] SCCACHE_PATH not set; RUSTC_WRAPPER will use bare 'sccache'"
+          fi
+
+      # ── Node.js + frontend build ─────────────────────────────────────────────
+      # Moved before SDK installs so the frontend compiles while heavy SDKs
+      # (Vulkan, LLVM, espeak) are set up afterwards — no dependency between
+      # the two.  On cache-warm runs the frontend finishes in < 30 s, so the
+      # wall-clock saving comes from not blocking the SDK steps behind it.
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Install protoc (Windows)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Test-Protoc {
+            try {
+              $null = & protoc --version
+              return ($LASTEXITCODE -eq 0)
+            } catch {
+              return $false
+            }
+          }
+
+          if (Test-Protoc) {
+            protoc --version
+            exit 0
+          }
+
+          $installed = $false
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              choco install protoc --no-progress -y
+            } catch {
+              Write-Host "[warn] choco protoc install attempt $i failed: $($_.Exception.Message)"
+            }
+
+            if (Test-Protoc) {
+              $installed = $true
+              break
+            }
+
+            Start-Sleep -Seconds (5 * $i)
+          }
+
+          if (-not $installed) {
+            Write-Host "[warn] Chocolatey unavailable; falling back to direct protoc download"
+            $ver = "25.3"
+            $url = "https://github.com/protocolbuffers/protobuf/releases/download/v$ver/protoc-$ver-win64.zip"
+            $zip = Join-Path $env:RUNNER_TEMP "protoc-$ver-win64.zip"
+            $dest = Join-Path $env:RUNNER_TEMP "protoc-$ver"
+            Invoke-WebRequest -Uri $url -OutFile $zip
+            Expand-Archive -Path $zip -DestinationPath $dest -Force
+            $bin = Join-Path $dest "bin"
+            if (-not (Test-Path (Join-Path $bin "protoc.exe"))) {
+              throw "protoc fallback install failed: protoc.exe not found"
+            }
+            $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            $env:PATH = "$bin;$env:PATH"
+            Write-Host "[ok] Installed protoc via direct download"
+          }
+
+          if (-not (Test-Protoc)) {
+            throw "protoc installation failed after Chocolatey + fallback"
+          }
+          protoc --version
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Verify Tauri frontend bundle structure
+        run: npm run -s verify:tauri:frontend
+
+      # ── NSIS + Vulkan SDK (parallel install) ─────────────────────────────────
+      # NSIS and the Vulkan SDK are independent of each other and of the Rust
+      # toolchain.  Installing them in a single step via background jobs cuts
+      # ~1-2 min of sequential wait time on cache-miss runs.
+      - name: Cache Vulkan SDK
+        uses: actions/cache@v5
+        with:
+          path: C:\VulkanSDK
+          key: windows-vulkan-sdk-${{ hashFiles('scripts/install-vulkan-sdk.ps1') }}
+
+      - name: Install NSIS + Vulkan SDK (parallel)
+        shell: powershell
+        run: |
+          # ── NSIS (background) ────────────────────────────────────────────────
+          $nsisJob = Start-Job -ScriptBlock {
+            $makensis = Get-Command makensis -ErrorAction SilentlyContinue
+            if (-not $makensis) {
+              Write-Output "[info] NSIS not found on PATH; installing via Chocolatey"
+              choco install nsis -y --no-progress
+              if ($LASTEXITCODE -ne 0) {
+                throw "Failed to install NSIS via Chocolatey (exit $LASTEXITCODE)"
+              }
+            }
+          }
+
+          # ── Vulkan SDK (foreground — needs env export) ───────────────────────
+          & .\scripts\install-vulkan-sdk.ps1
+          if (-not $env:VULKAN_SDK) {
+            Write-Error "VULKAN_SDK was not set by install-vulkan-sdk.ps1"
+            exit 1
+          }
+          "VULKAN_SDK=$env:VULKAN_SDK" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "[ok] Exported VULKAN_SDK=$env:VULKAN_SDK"
+
+          # ── Wait for NSIS ────────────────────────────────────────────────────
+          $nsisJob | Wait-Job | Receive-Job
+          if ($nsisJob.State -eq 'Failed') {
+            Write-Error "NSIS background install failed"
+            exit 1
+          }
+
+          # Locate makensis and export NSIS_DIR
+          $makensis = Get-Command makensis -ErrorAction SilentlyContinue
+          if ($makensis) {
+            $nsisDir = Split-Path -Parent $makensis.Source
+          } else {
+            $candidatePaths = @(
+              "C:\Program Files (x86)\NSIS",
+              "C:\Program Files\NSIS",
+              "$env:LOCALAPPDATA\NSIS"
+            )
+            $nsisDir = $null
+            foreach ($path in $candidatePaths) {
+              if (Test-Path (Join-Path $path "makensis.exe")) {
+                $nsisDir = $path
+                break
+              }
+            }
+          }
+
+          if (-not $nsisDir -or -not (Test-Path (Join-Path $nsisDir "makensis.exe"))) {
+            Write-Error "NSIS installation succeeded but makensis.exe is still not discoverable"
+            exit 1
+          }
+
+          "NSIS_DIR=$nsisDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $nsisDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Write-Host "[ok] NSIS_DIR=$nsisDir"
+
+      - name: Download prebuilt llama libs (Windows, optional)
+        shell: powershell
+        run: |
+          $url = "https://github.com/eugenehp/llama-cpp-rs/releases/latest/download/llama-prebuilt-windows-x86_64-pc-windows-msvc-q1-vulkan.tar.gz"
+          $archive = Join-Path $env:RUNNER_TEMP "llama-prebuilt-windows.tar.gz"
+          $dest = Join-Path $env:RUNNER_TEMP "llama-prebuilt-windows"
+          $expectedTarget = "x86_64-pc-windows-msvc"
+          $expectedFeature = "vulkan"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+
+          try {
+            Invoke-WebRequest -Uri $url -OutFile $archive
+            tar -xzf $archive -C $dest
+
+            $root = $dest
+            if (-not (Test-Path (Join-Path $root "lib")) -and -not (Test-Path (Join-Path $root "lib64")) -and -not (Test-Path (Join-Path $root "bin"))) {
+              $candidate = Get-ChildItem $dest -Directory | Select-Object -First 1
+              if ($candidate) { $root = $candidate.FullName }
+            }
+
+            if (-not $root -or -not (Test-Path $root)) {
+              Write-Host "[warn] prebuilt llama archive layout invalid; fallback to source build"
+              exit 0
+            }
+
+            $libs = Get-ChildItem -Path $root -Recurse -File -Include *.lib,*.dll -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $libs) {
+              Write-Host "[warn] prebuilt llama archive contains no windows libs; fallback to source build"
+              exit 0
+            }
+
+            $metadataPath = Join-Path $root "metadata.json"
+            if (Test-Path $metadataPath) {
+              $meta = Get-Content $metadataPath -Raw | ConvertFrom-Json
+              if ($meta.target -ne $expectedTarget -or -not ($meta.features -like "*$expectedFeature*")) {
+                Write-Host "[warn] prebuilt metadata mismatch (target=$($meta.target) features=$($meta.features)); fallback to source build"
+                exit 0
+              }
+            }
+
+            "LLAMA_PREBUILT_DIR=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "LLAMA_PREBUILT_SHARED=0" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            Write-Host "[ok] LLAMA_PREBUILT_DIR=$root"
+          } catch {
+            Write-Host "[warn] prebuilt llama artifact unavailable or invalid; fallback to source build"
+          }
+
+      # ── Ensure VC++ Redistributable DLLs are available ───────────────────────
+      # The binary uses dynamic CRT (/MD).  The NSIS installer bundles the CRT
+      # DLLs app-locally alongside skill.exe.  This step ensures they exist on
+      # the runner — either via the VS installation or by downloading the
+      # official VC++ Redistributable from Microsoft.
+      - name: Ensure VC++ CRT DLLs available
+        id: vcredist
+        shell: powershell
+        run: |
+          & (Join-Path $env:GITHUB_WORKSPACE "scripts/ensure-vcredist.ps1")
+
+          # Export for subsequent steps
+          if (-not $env:CRT_REDIST_DIR) {
+            Write-Error "ensure-vcredist.ps1 did not set CRT_REDIST_DIR"
+            exit 1
+          }
+
+      # ── Pre-flight: verify every required secret is set ──────────────────────
+      # Fails fast (before the 15-min build) if any secret is missing.
+      # Values are never printed.
+      #
+      # WINDOWS_CERTIFICATE          — base64-encoded .pfx code-signing certificate
+      #                                (OV or EV cert from DigiCert, Sectigo, etc.)
+      #                                How to encode:
+      #                                  certutil -encode cert.pfx cert.b64
+      #                                  — or on PowerShell:
+      #                                  [Convert]::ToBase64String([IO.File]::ReadAllBytes("cert.pfx"))
+      #
+      # WINDOWS_CERTIFICATE_PASSWORD — password protecting the .pfx
+      #                                Optional — if omitted the installer is built
+      #                                unsigned (SmartScreen will warn on first run).
+      #
+      # TAURI_SIGNING_PRIVATE_KEY    — Ed25519 private key for signing Tauri
+      #                                updater artifacts (same key as macOS/Linux)
+      - name: Verify signing secrets are present
+        if: steps.version_meta.outputs.dry_run != 'true'
+        id: signing_meta
+        shell: bash
+        env:
+          WINDOWS_CERTIFICATE:          ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY:    ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          # TAURI_SIGNING_PRIVATE_KEY is always required (updater artifact signing).
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::Secret 'TAURI_SIGNING_PRIVATE_KEY' is empty or not set."
+            exit 1
+          fi
+          echo "[ok] TAURI_SIGNING_PRIVATE_KEY is present."
+
+          # Windows code-signing certificate is optional.
+          # Both variables must be set together or both must be absent.
+          HAVE_CERT=false
+          if [ -n "$WINDOWS_CERTIFICATE" ] && [ -n "$WINDOWS_CERTIFICATE_PASSWORD" ]; then
+            HAVE_CERT=true
+          elif [ -n "$WINDOWS_CERTIFICATE" ] || [ -n "$WINDOWS_CERTIFICATE_PASSWORD" ]; then
+            echo "::error::WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD" \
+                 "must both be set or both be absent."
+            exit 1
+          fi
+
+          if [ "$HAVE_CERT" = "true" ]; then
+            echo "[ok] Windows code-signing certificate is present - installer will be signed."
+          else
+            echo "::warning::WINDOWS_CERTIFICATE is not set." \
+                 "The NSIS installer will be built unsigned." \
+                 "Windows SmartScreen may show a warning to end-users."
+          fi
+
+          # Expose for later steps.
+          echo "have_windows_cert=$HAVE_CERT" >> "$GITHUB_OUTPUT"
+          echo "HAVE_WINDOWS_CERT=$HAVE_CERT" >> "$GITHUB_ENV"
+
+      # ── espeak-ng MSVC static library ─────────────────────────────────────────
+      # Cache keyed on the build script; a script change busts the cache.
+      # The PS1 script requires MSVC tools (lib.exe) — set up above via
+      # ilammy/msvc-dev-cmd before this step runs.
+      # ── Import Windows code-signing certificate (optional) ───────────────────
+      # Skipped when WINDOWS_CERTIFICATE is not set (unsigned build).
+      # When present: imports the .pfx into the Current User certificate store,
+      # captures the SHA-1 thumbprint, and exposes it as CERTIFICATE_THUMBPRINT
+      # for the build step.  The temp .pfx file is deleted immediately after import.
+      #
+      # SmartScreen note: an OV (Organisation Validated) certificate will still
+      # trigger SmartScreen warnings on first run until the binary accumulates
+      # reputation.  An EV (Extended Validation) certificate skips this entirely.
+      - name: Import Windows code-signing certificate
+        if: steps.version_meta.outputs.dry_run != 'true' && steps.signing_meta.outputs.have_windows_cert == 'true'
+        shell: powershell
+        env:
+          WINDOWS_CERTIFICATE:          ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $certBytes = [System.Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          $certPath  = Join-Path $env:RUNNER_TEMP "signing.pfx"
+          [IO.File]::WriteAllBytes($certPath, $certBytes)
+
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD `
+                        -AsPlainText -Force
+          $cert = Import-PfxCertificate `
+                    -FilePath          $certPath `
+                    -CertStoreLocation Cert:\CurrentUser\My `
+                    -Password          $password
+
+          Remove-Item $certPath -Force
+
+          $thumbprint = $cert.Thumbprint
+          "CERTIFICATE_THUMBPRINT=$thumbprint" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          $expiry = $cert.NotAfter.ToString("yyyy-MM-dd")
+          Write-Host "[ok] Certificate imported"
+          Write-Host "  Thumbprint : $thumbprint"
+          Write-Host "  Subject    : $($cert.Subject)"
+          Write-Host "  Expires    : $expiry"
+
+          if ($cert.NotAfter -lt (Get-Date)) {
+            Write-Error "::error::Code-signing certificate has expired ($expiry). Renew it."
+            exit 1
+          }
+
+      # ── Standalone LLVM 19 for bindgen ──────────────────────────────────────
+      # VS2022's bundled Clang 19 is an MSVC-compat build (clang-cl) whose
+      # mmintrin.h references __builtin_ia32_* GCC-style intrinsics that
+      # clang-cl doesn't implement, causing bindgen (llama-cpp-sys-4) to panic
+      # with ~20 "use of undeclared identifier '__builtin_ia32_…'" errors.
+      #
+      # Fix: standalone LLVM 19 (non-MSVC-compat) implements all those builtins
+      # AND its headers match the same version VS2022 ships, so there is no
+      # version mismatch.  KyleMayes/install-llvm-action downloads directly
+      # from the LLVM GitHub releases (no Chocolatey dependency), has its own
+      # built-in cache keyed on the version string, and installs to C:\LLVM
+      # (a path without spaces, which avoids quoting issues in env vars).
+      #
+      # clang-sys checks LIBCLANG_PATH before PATH, so the explicit export
+      # below guarantees bindgen finds standalone LLVM's libclang.dll even
+      # when ilammy/msvc-dev-cmd has already put VS's clang-cl on PATH.
+      - name: Install LLVM 19
+        uses: KyleMayes/install-llvm-action@v2.0.9
+        with:
+          version: "19"
+          directory: C:\LLVM
+
+      - name: Export LIBCLANG_PATH
+        shell: powershell
+        run: |
+          # KyleMayes/install-llvm-action sets LLVM_PATH to the install root.
+          # libclang.dll lives in the bin/ subdirectory for Windows builds
+          # downloaded from LLVM GitHub releases.
+          $dll = Get-ChildItem "C:\LLVM" -Recurse -Filter "libclang.dll" `
+                   -ErrorAction SilentlyContinue |
+                   Select-Object -First 1
+          if (-not $dll) {
+            Write-Error "libclang.dll not found under C:\LLVM"
+            exit 1
+          }
+
+          $dir = Split-Path $dll.FullName
+          "LIBCLANG_PATH=$dir" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "[ok] LIBCLANG_PATH=$dir  (libclang.dll at $($dll.FullName))"
+
+          # Also set LLVM_CONFIG to help with toolchain detection
+          "LLVM_CONFIG=C:\LLVM\bin\llvm-config.exe" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "[ok] LLVM_CONFIG=C:\LLVM\bin\llvm-config.exe"
+          
+          # Set additional environment to bypass issues in clang-cl with mmx intrinsics
+          "CC=C:\LLVM\bin\clang.exe" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "[ok] CC=C:\LLVM\bin\clang.exe"
+          
+          "CXX=C:\LLVM\bin\clang++.exe" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "[ok] CXX=C:\LLVM\bin\clang++.exe"
+
+      # ── Verify lld-link is available ────────────────────────────────────────
+      # LLVM 19 (installed above) ships lld-link.exe — a drop-in replacement
+      # for MSVC's link.exe that is significantly faster for large Rust
+      # projects.  Detect it and export the linker env var for cargo.
+      - name: Detect lld-link (fast LLVM linker)
+        shell: powershell
+        run: |
+          $lldLink = Get-ChildItem "C:\LLVM" -Recurse -Filter "lld-link.exe" `
+                       -ErrorAction SilentlyContinue |
+                       Select-Object -First 1
+          if ($lldLink) {
+            $dir = Split-Path $lldLink.FullName
+            # Cargo env-var form: CARGO_TARGET_<TRIPLE>_LINKER
+            "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$($lldLink.FullName)" |
+              Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            Write-Host "[ok] lld-link found: $($lldLink.FullName)"
+            Write-Host "[ok] Set CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER for fast linking"
+          } else {
+            Write-Host "[info] lld-link not found under C:\LLVM; falling back to MSVC link.exe"
+          }
+
+      # ── Compile Rust (cargo build only) ──────────────────────────────────────
+      #
+      # Split from packaging so CI timing shows compile vs NSIS separately.
+      #
+      # --features custom-protocol: required — without it Tauri compiles in
+      #   dev mode and loads UI from localhost:1420 instead of the embedded
+      #   SvelteKit build output.
+      # --features llm-vulkan: enables Vulkan GPU offloading for LLM inference
+      #   (covers NVIDIA, AMD, Intel Arc without vendor-specific SDKs).
+      - name: Compile (Rust)
+        shell: bash
+        env:
+          VULKAN_SDK:        ${{ env.VULKAN_SDK }}
+          LIBCLANG_PATH:     ${{ env.LIBCLANG_PATH }}
+          # RUSTC_WRAPPER is set via GITHUB_ENV in the "Configure sccache"
+          # step (absolute Windows path to sccache.exe).  Do NOT override it
+          # here with the bare name 'sccache' — cargo.exe on Windows cannot
+          # resolve it because sccache-action v0.0.9 fails to add the sccache
+          # directory to the Windows Path variable.
+          SCCACHE_GHA_ENABLED: "true"
+          SCCACHE_CACHE_SIZE:  "10G"
+          # Dynamic CRT: native deps (DirectML, ONNX Runtime, Vulkan loader)
+          # ship as pre-built /MD DLLs.  Using /MD everywhere avoids CRT
+          # mismatch.  The NSIS installer bundles the VC++ Redist DLLs
+          # app-locally so end users don't need a separate install.
+          CMAKE_MSVC_RUNTIME_LIBRARY: MultiThreadedDLL
+          # Let sccache cache C/C++ compilations from cmake-based -sys crates
+          # (llama-cpp-sys-4, espeak-ng, etc.).  Without these, only rustc
+          # invocations go through sccache — the heavy cmake builds are
+          # re-done from scratch every time.
+          CMAKE_C_COMPILER_LAUNCHER:   sccache
+          CMAKE_CXX_COMPILER_LAUNCHER: sccache
+        run: |
+          set -euo pipefail
+
+          # Diagnostic: verify sccache is reachable by cargo
+          echo "[diag] RUSTC_WRAPPER=$RUSTC_WRAPPER"
+          if [ -n "${RUSTC_WRAPPER:-}" ]; then
+            "$RUSTC_WRAPPER" --version || echo "[warn] RUSTC_WRAPPER binary not executable"
+          fi
+          sccache --show-stats || true
+
+          run_cmd() {
+            cargo build -p skill --release --locked --features custom-protocol,llm-vulkan,screenshots --timings
+          }
+
+          if ! run_cmd; then
+            if [[ -n "${LLAMA_PREBUILT_DIR:-}" ]]; then
+              echo "::warning::Windows release compile failed with prebuilt llama; retrying with source build"
+              unset LLAMA_PREBUILT_DIR LLAMA_PREBUILT_SHARED
+              run_cmd
+            else
+              exit 1
+            fi
+          fi
+
+          sccache --show-stats || true
+
+      # Make sure NSIS packaging can always find onnxruntime.dll next to the
+      # built binary, independent of Cargo OUT_DIR layout details.
+      - name: Stage onnxruntime.dll for packaging
+        shell: powershell
+        run: |
+          if (-not $env:ORT_LIB_LOCATION) {
+            Write-Error "ORT_LIB_LOCATION is not set"
+            exit 1
+          }
+
+          $Dll = Join-Path $env:ORT_LIB_LOCATION "onnxruntime.dll"
+          if (-not (Test-Path $Dll)) {
+            Write-Error "onnxruntime.dll not found at $Dll"
+            exit 1
+          }
+
+          $releaseDirs = @(
+            "src-tauri/target/release",
+            "src-tauri/target/x86_64-pc-windows-msvc/release"
+          )
+
+          foreach ($dir in $releaseDirs) {
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            Copy-Item $Dll (Join-Path $dir "onnxruntime.dll") -Force
+            Write-Host "[ok] Copied onnxruntime.dll to $dir"
+          }
+
+      # ── Upload cargo build timings ───────────────────────────────────────────
+      # The --timings flag produces an HTML report showing per-crate compile
+      # durations.  Upload it so slow crates can be identified and targeted.
+      - name: Upload cargo build timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-timings-windows
+          path: src-tauri/target/cargo-timings/
+          retention-days: 30
+
+      # ── Log binary dependencies (diagnostic) ──────────────────────────────
+      # CRT DLLs were already located in the "Ensure VC++ CRT DLLs available"
+      # step before the build.  This step just logs the dependency list.
+      - name: Log binary dependencies
+        shell: powershell
+        run: |
+          $exe = "src-tauri/target/release/skill.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Error "skill.exe not found at $exe"
+            exit 1
+          }
+
+          Write-Host "Binary dependencies:"
+          & dumpbin /dependents $exe
+
+          Write-Host ""
+          Write-Host "CRT DLLs will be bundled from: $env:CRT_REDIST_DIR"
+
+      # ── Package NSIS installer ───────────────────────────────────────────────
+      #
+      # Runs the NSIS packaging script against the pre-built binary, then
+      # optionally signs the installer and creates updater artifacts.
+      - name: Package NSIS installer
+        shell: powershell
+        run: |
+          & powershell -ExecutionPolicy Bypass -File scripts/create-windows-nsis.ps1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "[error] create-windows-nsis.ps1 failed with exit code $LASTEXITCODE"
+            exit $LASTEXITCODE
+          }
+
+          $bundleDirCandidates = @(
+            (Join-Path $PWD "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis"),
+            (Join-Path $PWD "src-tauri/target/release/bundle/nsis")
+          )
+
+          $bundleDir = $null
+          $installer = $null
+          foreach ($candidate in $bundleDirCandidates) {
+            if (-not (Test-Path $candidate)) { continue }
+            $candidateInstaller = Get-ChildItem -Path $candidate -File -Filter "*.exe" -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -notmatch "(?i)uninstall" } |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 1
+            if ($candidateInstaller) {
+              $bundleDir = $candidate
+              $installer = $candidateInstaller
+              break
+            }
+          }
+
+          if (-not $installer) {
+            Write-Host "[error] NSIS installer .exe not found in expected bundle directories"
+            foreach ($candidate in $bundleDirCandidates) {
+              if (Test-Path $candidate) {
+                Write-Host "[diag] bundle dir snapshot: $candidate"
+                Get-ChildItem -Path $candidate -File -ErrorAction SilentlyContinue |
+                  Select-Object Name, Length |
+                  Format-Table -AutoSize |
+                  Out-String |
+                  Write-Host
+              } else {
+                Write-Host "[diag] bundle dir not found: $candidate"
+              }
+            }
+            exit 1
+          }
+
+          Write-Host "[ok] NSIS installer built: $($installer.FullName) ($([math]::Round($installer.Length / 1MB, 1)) MB)"
+
+      # ── Sign installer + create updater artifacts ────────────────────────────
+      # Skipped in dry-run mode (no signing secrets available).
+      - name: Sign installer + create updater artifacts
+        if: steps.version_meta.outputs.dry_run != 'true'
+        shell: powershell
+        env:
+          TAURI_SIGNING_PRIVATE_KEY:          ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $bundleDirCandidates = @(
+            (Join-Path $PWD "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis"),
+            (Join-Path $PWD "src-tauri/target/release/bundle/nsis")
+          )
+
+          $bundleDir = $null
+          $installer = $null
+          foreach ($candidate in $bundleDirCandidates) {
+            if (-not (Test-Path $candidate)) { continue }
+            $candidateInstaller = Get-ChildItem -Path $candidate -File -Filter "*.exe" -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -notmatch "(?i)uninstall" } |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 1
+            if ($candidateInstaller) {
+              $bundleDir = $candidate
+              $installer = $candidateInstaller
+              break
+            }
+          }
+
+          if ($env:CERTIFICATE_THUMBPRINT) {
+            Write-Host "[ok] signing installer: $($installer.FullName)"
+            & signtool sign `
+              /sha1 $env:CERTIFICATE_THUMBPRINT `
+              /fd sha256 `
+              /tr http://timestamp.digicert.com `
+              /td sha256 `
+              /v `
+              $installer.FullName
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "[error] signtool failed while signing installer"
+              exit $LASTEXITCODE
+            }
+          } else {
+            Write-Host "[warn] CERTIFICATE_THUMBPRINT is not set; installer remains unsigned"
+          }
+
+          $zipPath = Join-Path $bundleDir ("$($installer.BaseName).nsis.zip")
+          $sigPath = "$zipPath.sig"
+
+          if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
+          if (Test-Path $sigPath) { Remove-Item $sigPath -Force }
+
+          # Use Deflate (CompressionLevel.Optimal) for the updater zip.
+          # zip 4.6.1 now has flate2 + deflate64 enabled via the workspace
+          # dependency in Cargo.toml, so both method 8 (Deflate) and method
+          # 9 (Deflate64) are supported by tauri-plugin-updater at extract time.
+          Add-Type -AssemblyName System.IO.Compression
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::Open(
+            $zipPath,
+            [System.IO.Compression.ZipArchiveMode]::Create
+          )
+          [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+            $zip,
+            $installer.FullName,
+            $installer.Name,
+            [System.IO.Compression.CompressionLevel]::Optimal
+          ) | Out-Null
+          $zip.Dispose()
+          Write-Host "[ok] created updater zip (Deflate): $zipPath"
+
+          & npx tauri signer sign $zipPath
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "[error] tauri signer failed for updater zip"
+            exit $LASTEXITCODE
+          }
+
+          if (-not (Test-Path $sigPath)) {
+            Write-Host "[error] expected updater signature not found: $sigPath"
+            exit 1
+          }
+
+          Write-Host "[ok] updater artifacts created (.nsis.zip + .sig)"
+
+      # ── Locate build artifacts ────────────────────────────────────────────────
+      - name: Collect artifact paths
+        if: steps.version_meta.outputs.dry_run != 'true'
+        id: artifacts
+        shell: bash
+        run: |
+          CANDIDATES=(
+            "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis"
+            "src-tauri/target/release/bundle/nsis"
+          )
+
+          BUNDLE_DIR=""
+          NSIS_EXE=""
+          NSIS_ZIP=""
+          NSIS_SIG=""
+
+          for candidate in "${CANDIDATES[@]}"; do
+            [ -d "$candidate" ] || continue
+
+            candidate_exe="$(find "$candidate" -maxdepth 1 -name "*.exe" ! -iname "*uninstall*" | head -1)"
+            candidate_zip="$(find "$candidate" -maxdepth 1 -name "*.nsis.zip" ! -name "*.sig" | head -1)"
+            candidate_sig="$(find "$candidate" -maxdepth 1 -name "*.nsis.zip.sig" | head -1)"
+
+            if [ -n "$candidate_exe" ] && [ -n "$candidate_zip" ] && [ -n "$candidate_sig" ]; then
+              BUNDLE_DIR="$candidate"
+              NSIS_EXE="$candidate_exe"
+              NSIS_ZIP="$candidate_zip"
+              NSIS_SIG="$candidate_sig"
+              break
+            fi
+          done
+
+          if [ -z "$NSIS_EXE" ] || [ -z "$NSIS_ZIP" ] || [ -z "$NSIS_SIG" ]; then
+            echo "::error::One or more expected artifacts are missing."
+            for candidate in "${CANDIDATES[@]}"; do
+              if [ -d "$candidate" ]; then
+                echo "[diag] listing $candidate"
+                find "$candidate" -maxdepth 1 -type f | sort || true
+              else
+                echo "[diag] bundle dir not found: $candidate"
+              fi
+            done
+            echo "  EXE : ${NSIS_EXE:-(not found)}"
+            echo "  ZIP : ${NSIS_ZIP:-(not found)}"
+            echo "  SIG : ${NSIS_SIG:-(not found)}"
+            exit 1
+          fi
+
+          echo "nsis_exe=$NSIS_EXE"                          >> "$GITHUB_OUTPUT"
+          echo "nsis_zip=$NSIS_ZIP"                          >> "$GITHUB_OUTPUT"
+          echo "nsis_sig=$NSIS_SIG"                          >> "$GITHUB_OUTPUT"
+          echo "nsis_zip_name=$(basename "$NSIS_ZIP")"       >> "$GITHUB_OUTPUT"
+
+          echo "Artifacts found:"
+          echo "  EXE : $NSIS_EXE  ($(du -sh "$NSIS_EXE" | cut -f1))"
+          echo "  ZIP : $NSIS_ZIP  ($(du -sh "$NSIS_ZIP" | cut -f1))"
+          echo "  SIG : $NSIS_SIG"
+
+      # ── Create / update GitHub Release with Windows binaries ─────────────────
+      #
+      # softprops/action-gh-release creates the release if it doesn't exist yet,
+      # or adds files to it if it was already created by the macOS or Linux
+      # workflow.  latest.json is handled in the next step.
+      #
+      # Windows assets uploaded here:
+      #   *_x64-setup.exe          — NSIS installer (distribute to users)
+      #   *.nsis.zip               — Tauri updater bundle
+      #   *.nsis.zip.sig           — Ed25519 signature for the updater
+      - name: Prepare changelog notes for release
+        if: steps.version_meta.outputs.dry_run != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ steps.version_meta.outputs.version }}"
+          CURRENT_TAG="${{ steps.version_meta.outputs.tag }}"
+          PREV_TAG="$(git describe --tags --abbrev=0 "${CURRENT_TAG}^" 2>/dev/null || true)"
+          COMMIT_RANGE="$CURRENT_TAG"
+          if [ -n "$PREV_TAG" ]; then
+            COMMIT_RANGE="$PREV_TAG..$CURRENT_TAG"
+          fi
+
+          TMP_SECTION="release-changelog-section.md"
+          CONTRIBUTORS_FILE="release-contributors.md"
+          RELEASE_BODY="release-notes.md"
+
+          awk -v version="$VERSION" '
+            BEGIN { in_section = 0; found = 0 }
+            $0 ~ ("^## \\[" version "\\]") { in_section = 1; found = 1; next }
+            in_section && $0 ~ /^## \[/ { exit }
+            in_section { print }
+            END { if (!found) exit 2 }
+          ' CHANGELOG.md > "$TMP_SECTION" || true
+
+          git log --format='%aN' $COMMIT_RANGE \
+            | awk '
+                { gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0) }
+                NF && !seen[$0]++ { print "- " $0 }
+              ' > "$CONTRIBUTORS_FILE"
+
+          {
+            echo "## Changelog"
+            echo
+            if [ -s "$TMP_SECTION" ]; then
+              cat "$TMP_SECTION"
+            else
+              echo "_No changelog section found for version $VERSION in CHANGELOG.md._"
+            fi
+            echo
+            echo "## Contributors"
+            echo
+            if [ -s "$CONTRIBUTORS_FILE" ]; then
+              cat "$CONTRIBUTORS_FILE"
+            else
+              echo "_No commit contributors found in range $COMMIT_RANGE._"
+            fi
+          } > "$RELEASE_BODY"
+
+          rm -f "$TMP_SECTION" "$CONTRIBUTORS_FILE"
+
+      - name: Create / update GitHub Release
+        if: steps.version_meta.outputs.dry_run != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:                ${{ steps.version_meta.outputs.tag }}
+          name:                    Skill v${{ steps.version_meta.outputs.version }}
+          generate_release_notes:  false
+          body_path:               release-notes.md
+          fail_on_unmatched_files: true
+          files: |
+            ${{ steps.artifacts.outputs.nsis_exe }}
+            ${{ steps.artifacts.outputs.nsis_zip }}
+            ${{ steps.artifacts.outputs.nsis_sig }}
+
+      # ── Update latest.json ────────────────────────────────────────────────────
+      #
+      # Downloads the current latest.json from the release (created by whichever
+      # platform workflow ran first), merges the windows-x86_64 entry, then
+      # re-uploads.  If no latest.json exists yet, creates one from scratch.
+      - name: Update latest.json
+        if: steps.version_meta.outputs.dry_run != 'true'
+        shell: powershell
+        env:
+          GH_TOKEN:     ${{ github.token }}
+          GH_REPO:      ${{ github.repository }}
+          TAG:          ${{ steps.version_meta.outputs.tag }}
+          VERSION:      ${{ steps.version_meta.outputs.version }}
+          NSIS_ZIP_NAME: ${{ steps.artifacts.outputs.nsis_zip_name }}
+          NSIS_SIG_PATH: ${{ steps.artifacts.outputs.nsis_sig }}
+        run: |
+          $version = $env:VERSION
+          $tag = $env:TAG
+          $repo = $env:GH_REPO
+          $zipName = $env:NSIS_ZIP_NAME
+          $sigPath = $env:NSIS_SIG_PATH
+
+          $signature = (Get-Content $sigPath -Raw).Trim()
+          $downloadUrl = "https://github.com/$repo/releases/download/$tag/$zipName"
+
+          # Try to download existing latest.json from the release; fall back to
+          # a fresh manifest when it does not exist yet.
+          & gh release download $tag --pattern latest.json --output latest.json --clobber
+          if ($LASTEXITCODE -eq 0 -and (Test-Path "latest.json")) {
+            $manifest = Get-Content "latest.json" -Raw | ConvertFrom-Json
+          } else {
+            $manifest = [ordered]@{
+              version = $version
+              notes = "NeuroSkill$([char]0x2122) v$version"
+              pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+              platforms = [ordered]@{}
+            }
+          }
+
+          if (-not $manifest.platforms) {
+            $manifest | Add-Member -NotePropertyName platforms -NotePropertyValue ([ordered]@{}) -Force
+          }
+
+          # ConvertFrom-Json returns PSCustomObjects; dot-assignment of a new
+          # hyphenated property on a PSCustomObject fails.  Use Add-Member for
+          # PSCustomObjects and bracket-notation for hashtables/ordered dicts.
+          $platformEntry = [ordered]@{
+            url       = $downloadUrl
+            signature = $signature
+          }
+          if ($manifest.platforms -is [System.Collections.IDictionary]) {
+            $manifest.platforms["windows-x86_64"] = $platformEntry
+          } else {
+            $manifest.platforms | Add-Member -NotePropertyName "windows-x86_64" `
+              -NotePropertyValue $platformEntry -Force
+          }
+
+          $json = $manifest | ConvertTo-Json -Depth 20
+          $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+          [System.IO.File]::WriteAllText("latest.json", $json, $utf8NoBom)
+          Write-Host "Updated latest.json:"
+          Get-Content "latest.json"
+
+          & gh release upload $tag latest.json --clobber
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          Write-Host "[ok] latest.json uploaded to release $tag"
+
+      # ── Remove the certificate from the runner's cert store ──────────────────
+      - name: Remove signing certificate
+        if: always() && steps.version_meta.outputs.dry_run != 'true' && steps.signing_meta.outputs.have_windows_cert == 'true'
+        shell: powershell
+        run: |
+          if ($env:CERTIFICATE_THUMBPRINT) {
+            Get-ChildItem Cert:\CurrentUser\My\$env:CERTIFICATE_THUMBPRINT `
+              -ErrorAction SilentlyContinue |
+              Remove-Item -Force
+            Write-Host "[ok] Certificate removed from store."
+          }
+
+      # ── Discord notification ──────────────────────────────────────────────────
+      - name: Notify Discord of release
+        if: always() && steps.version_meta.outputs.dry_run != 'true'
+        shell: powershell
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          JOB_STATUS:          ${{ job.status }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:DISCORD_WEBHOOK_URL)) {
+            Write-Host "[skip] DISCORD_WEBHOOK_URL is not set; skipping Discord notification."
+            exit 0
+          }
+
+          $commitMsg = (git log -1 --format='%s') | Select-Object -First 1
+          if ($commitMsg.Length -gt 200) { $commitMsg = $commitMsg.Substring(0, 200) }
+          $releaseUrl = "${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ steps.version_meta.outputs.tag }}"
+          $runUrl = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          if ($env:JOB_STATUS -eq "success") {
+            $color = 3066993
+            $title = "NeuroSkill$([char]0x2122) Release v${{ steps.version_meta.outputs.version }} - Windows Published"
+            $desc  = "NeuroSkill$([char]0x2122) Windows build published and ready to download."
+            $linkLine = "**[Download v${{ steps.version_meta.outputs.version }}]($releaseUrl)**"
+          } else {
+            $color = 15158332
+            $title = "NeuroSkill$([char]0x2122) Release v${{ steps.version_meta.outputs.version }} - Windows Failed"
+            $desc  = "The NeuroSkill$([char]0x2122) Windows release build failed. Check the run for details."
+            $linkLine = "**[View failed run]($runUrl)**"
+          }
+
+          $payload = @{
+            embeds = @(
+              @{
+                title = $title
+                description = "$desc`n`n$linkLine"
+                url = $runUrl
+                color = $color
+                fields = @(
+                  @{ name = "Tag";      value = "${{ steps.version_meta.outputs.tag }}";     inline = $true },
+                  @{ name = "Version";  value = "${{ steps.version_meta.outputs.version }}"; inline = $true },
+                  @{ name = "Platform"; value = "Windows x86_64";                              inline = $true },
+                  @{ name = "Actor";    value = "${{ github.actor }}";                         inline = $true },
+                  @{ name = "Commit Message"; value = $commitMsg;                              inline = $false }
+                )
+                footer = @{ text = "${{ github.repository }}" }
+              }
+            )
+          } | ConvertTo-Json -Depth 10
+
+          try {
+            Invoke-RestMethod -Method Post -Uri $env:DISCORD_WEBHOOK_URL -ContentType "application/json" -Body $payload | Out-Null
+            Write-Host "[ok] Discord notification sent."
+          } catch {
+            Write-Error "Discord webhook request failed: $($_.Exception.Message)"
+            exit 1
+          }

@@ -1,0 +1,15 @@
+*.o
+*.hi
+*~
+dist/
+cabal-dev/
+.hsenv
+TAGS
+tags
+*.tag
+client_session_key.aes
+.cabal-sandbox
+hl.tar.gz
+.hsenv*
+cabal.sandbox.config
+/.stack-work/

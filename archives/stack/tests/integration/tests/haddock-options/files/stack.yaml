@@ -1,0 +1,6 @@
+snapshot: lts-24.24
+
+build:
+  haddock-arguments:
+    haddock-args:
+    - --optghc=-DFOO

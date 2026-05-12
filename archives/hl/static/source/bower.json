@@ -1,0 +1,22 @@
+{
+  "name": "hl-assets",
+  "description": "",
+  "main": "gulpfile.js",
+  "authors": [
+    "David Deutsch <skore@valanx.org>"
+  ],
+  "license": "BSD3",
+  "homepage": "https://github.com/daviddeutsch/hl-assets",
+  "moduleType": [],
+  "private": true,
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ],
+  "dependencies": {
+    "bootstrap-sass": "~3.3.6"
+  }
+}

@@ -1,0 +1,124 @@
+
+[] Versions issues:
+    [] cgi - haven't heard from maintainer, anything newer than version in
+        platform (3000.1.7.4) requires new packages
+    [] html - haven't heard from maintainer, but no new versions exist
+    [] GLUT & OpenGL - maintainer isn't sure that re-worked versions can
+        be prepared in time
+
+* Mac users with 10.7 or later and newer Xcode will probably have to install
+  autoconf as it is no longer part of the command line tools
+
+* Needed to down-rev to network-2.3.1.0 from network-2.4.0.1
+  since cabal-install 0.14.0 had an upper bound on network < 2.4
+
+* Needed to add primitive==0.5 to haskell-platform.cabal
+  so the package will be included in the source tarball
+
+* GHC includes these non-HP packages:
+    bin-package-db-0.0.0.0/
+    binary-0.5.1.0/
+    ghc-prim-0.2.0.0/
+    hoopl-3.8.7.3/
+    integer-gmp-0.4.0.0/
+
+* Still need the PatchSettings.hs program
+
+* sign with:
+  productsign --sign 'Developer ID Installer: Mark Lentczner' xxx.pkg xxx-signed.pkg
+* check wtih:
+  spctl -a -v --type install xxx-signed.pkg
+
+* installing one same GHC version over existing (even if archs are different):
+  - causes failures in the postinstall.sh where the links for docs fail as they are not -sf
+  - uninstall-hs doesn't catch this
+
+* GHC central forgot the Cabal manual in 7.4.2's distribution - so we're missing it!
+
+
+TODO
+----
+[x] update vector and primitive versions
+[x] remove Build.hs - it did all its work by shelling out anyway!
+[x] main .cabal file should not have versions commented out
+   [x] this will require a way to extract the list of packages that need
+      to be part of the source release
+   [x] why not also extract the list of packages needed for core.packages
+[x] fix to build.hs (ticket #195)
+[x] bugs in build.sh (ticket #197)
+[x] build instructions in the tarball (ticket #207)
+[x] merge in shared library patch (ticket #198)
+
+MAC TODO
+--------
+[x] mac cabal script needs to quote things with $HOME or ~ in them (ticket #192)
+[x] If the cabal command is "update" then the wrapper script shouldn't do an
+   update the first time through!
+[x] sign Mac installers (ticket #203)
+    [x] add instructions to makefile output
+[] where are the GLUT documents (ticket #202)
+
+WEB TODO
+--------
+[x] update language to indicate that 64-bit needs Xcode 4.1 or later
+   (see ticket #199)
+[x] update language to indicate that arch should match the arch used
+   for mac ports or brew (ticket #210)
+[x] add centos distribution link (ticket #206)
+[x] make it clear that HP is in some distros package system
+   [x] merge in pull request #7
+[x] pretty up and update release timetable page (ticket #131)
+
+[] wiki page over at haskell.org is pretty lame
+[] contents.markdown is somewhat, er, lumpy
+
+[x] change season
+[x] update all version links
+[x] add prior versions
+
+
+[x] Edit info in upper-right of index.html
+[x] add a new section to prior.markdown for previously current release
+  [x] move the download links there
+
+[x] Update release schedule for current and next release on wiki:
+   http://trac.haskell.org/haskell-platform/wiki/ReleaseTimetable
+[x] on lambda.haskell.org
+  [x] create /var/www/platform/download/<version>
+  [x] copy installers there
+  [x] create md5sum.txt:
+    md5sum [hH]* > md5sum.txt
+[x] update windows.markdown, mac.markdown, and linux.markdown
+  [x] update the download link
+  [x] update the number of the release
+  [x] for linux, update the link to GHC binary download page
+[x] update the GHC version and info on contents.markdown
+[x] make the doc
+  [x] install the platform on a machine
+  [x] cd /Library/Haskell/doc
+  [x] tar czvLf ~/hp-doc-<ver>.tgz *
+  [x] untar that somewhere and clean it up:
+    [x] find packages -name 'bin' -o -name 'lib' | xargs rm -rf
+    [x] remove mac stuff from start.html
+    [x] retar it back up
+  [x] get that tarball onto lambda
+[x] update current links on lambda:
+  [x] /var/www/platform/docs/current
+  [x] /var/www/platform/download/current
+
+
+DEPLOY
+------
+[x] move all downloads into place (in new subdir)
+[x] generate and install new docs on web server
+[x] merge pre-release into master
+[x] update website
+[x] announce on
+   [x] haskell-platform, libraries, haskell, haskell-cafe mailing lists
+   [x] reddit
+[] update topic link in #haskell
+
+
+
+
+

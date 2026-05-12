@@ -1,0 +1,38 @@
+# retry-deploy.ocp — Deploy with Retry + Exponential Backoff
+# Usage: demonstrates try/catch + while loop pattern
+
+set APP = "myapp"
+set MAX_RETRIES = 5
+set ATTEMPT = 0
+set SUCCESS = 0
+
+echo "=== Deploying $APP with retry ==="
+
+while $ATTEMPT < $MAX_RETRIES {
+    set ATTEMPT = $ATTEMPT + 1
+    echo "--- Attempt $ATTEMPT/$MAX_RETRIES ---"
+
+    try {
+        run "kubectl apply -f deployment.yaml"
+        run "kubectl rollout status deployment/$APP --timeout=120s"
+        echo "Deploy successful! 🎉"
+        set SUCCESS = 1
+        set ATTEMPT = 99
+    } catch {
+        echo "Attempt $ATTEMPT failed..."
+
+        if $ATTEMPT < $MAX_RETRIES {
+            set WAIT = $ATTEMPT * 5
+            echo "Waiting ${WAIT}s before retry..."
+            run "sleep $WAIT"
+        }
+    }
+}
+
+if $SUCCESS == 0 {
+    echo "All $MAX_RETRIES attempts failed ❌"
+    run "kubectl rollout undo deployment/$APP"
+    echo "Rolled back to previous version"
+} else {
+    echo "Deploy complete! 🚀"
+}

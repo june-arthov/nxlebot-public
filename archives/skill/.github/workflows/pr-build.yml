@@ -1,0 +1,613 @@
+name: Preview Build
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Produces a fully signed + notarised macOS build from any branch or PR so the
+# team can validate the artifact before tagging an official release.
+#
+# Two ways to trigger:
+#
+#   1. Add the "build" label to a pull request.
+#      → Checks out the PR head, builds, posts a download-link comment on the PR.
+#
+#   2. Actions → "Preview Build" → "Run workflow" (workflow_dispatch).
+#      → Select the branch (and optionally paste a full SHA in the input).
+#        Use this to test any branch, not just open PRs.
+#
+# The result is uploaded as a GitHub Actions artifact (14-day retention).
+# No GitHub Release is created, so the Releases page stays clean.
+#
+# Artifact name: skill-preview-pr<N>-<sha8>   (label trigger)
+#                skill-preview-<branch>-<sha8> (dispatch trigger)
+#
+# ── Security hardening ────────────────────────────────────────────────────────
+#
+# Third-party (fork) PRs are blocked at three independent layers:
+#
+#   1. Job condition  — skips the entire job if head.repo ≠ this repo.
+#   2. Labeler check  — verifies the actor who added the label has ≥ write
+#                       permission even for same-repo PRs.
+#   3. Secret gate    — asserts all Release secrets are present BEFORE any
+#                       PR code is checked out or executed.
+#
+# A fourth layer (GitHub UI) must be configured manually:
+#   Settings → Environments → Release → Required reviewers
+#   Add one or two trusted maintainers so GitHub pauses the job and requires a
+#   human approval click before any environment secret is released.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  # ── Add the "build" label to a PR ──────────────────────────────────────────
+  pull_request:
+    types: [labeled]
+
+  # ── Actions → Run workflow ──────────────────────────────────────────────────
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: >-
+          Branch, tag, or full SHA to build.
+          Leave blank to build the branch selected in the "Run workflow" dropdown.
+        required: false
+        default: ''
+
+# One preview build per PR at a time — cancel the running one when a new
+# commit is pushed or the label is re-applied.
+concurrency:
+  group: preview-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read         # checkout
+  pull-requests: write   # post download-link comment
+
+jobs:
+  preview:
+    # ── [FIX 1] Fork rejection ────────────────────────────────────────────────
+    # For label events: only run when
+    #   a) the label is literally "build", AND
+    #   b) the PR originates from this repo (not a fork).
+    # Forks do not receive environment secrets under pull_request, but they
+    # can still execute arbitrary code on the runner before the secret check.
+    # Rejecting them here stops the job before a single line of PR code runs.
+    # workflow_dispatch events always originate from a maintainer — always run.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'pull_request' &&
+        github.event.label.name == 'build' &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
+
+    name: Preview — aarch64-apple-darwin
+    runs-on: macos-26
+
+    # Pull signing secrets from the same environment as the official release.
+    environment: Release
+
+    steps:
+      # ── [FIX 2] Verify the labeler has write (or higher) permission ─────────
+      #
+      # Labels can only be added by collaborators, but a repo may grant "read"
+      # or "triage" to outside collaborators who can still apply labels.
+      # This step confirms the actor has at minimum "write" access before the
+      # job proceeds.  Runs only for label events; dispatch is always a
+      # maintainer.
+      - name: Verify labeler has write access
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner:    context.repo.owner,
+              repo:     context.repo.repo,
+              username: context.actor,
+            });
+            const level   = data.permission;                  // none|read|triage|write|maintain|admin
+            const allowed = ['write', 'maintain', 'admin'];
+            if (!allowed.includes(level)) {
+              core.setFailed(
+                `Actor '${context.actor}' has permission '${level}' — ` +
+                `only write / maintain / admin may trigger preview builds.`
+              );
+            }
+            console.log(`✓ Actor '${context.actor}' has permission '${level}'.`);
+
+      # ── [FIX 3] Verify signing secrets BEFORE any PR code is executed ───────
+      #
+      # The original workflow checked secrets after npm ci and build-espeak-static.sh,
+      # meaning PR code ran first.  By asserting secrets here — before checkout —
+      # we guarantee no untrusted code ever touches the runner if secrets are absent.
+      #
+      # Fail fast before the 20-minute build if any secret is missing.
+      # Values are never printed.
+      - name: Verify signing and notarization secrets
+        env:
+          APPLE_CERTIFICATE:          ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY:     ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID:                   ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD:             ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID:              ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY:  ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          ok=true
+          for var in \
+            APPLE_CERTIFICATE \
+            APPLE_CERTIFICATE_PASSWORD \
+            APPLE_SIGNING_IDENTITY \
+            APPLE_ID \
+            APPLE_PASSWORD \
+            APPLE_TEAM_ID \
+            TAURI_SIGNING_PRIVATE_KEY
+          do
+            if [ -z "${!var}" ]; then
+              echo "::error::Secret '$var' is empty or not set in the Release environment."
+              ok=false
+            fi
+          done
+          $ok || exit 1
+          echo "✓ All signing and notarization secrets are present."
+
+      # ── Resolve what to check out ───────────────────────────────────────────
+      #
+      # For label events  → use the PR head SHA (immutable reference).
+      # For dispatch       → use inputs.ref if provided, else github.ref
+      #                      (the branch selected in the "Run workflow" dropdown).
+      - name: Resolve ref and PR metadata
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "ref=${{ github.event.pull_request.head.sha }}"  >> "$GITHUB_OUTPUT"
+            echo "pr=${{ github.event.pull_request.number }}"     >> "$GITHUB_OUTPUT"
+            echo "branch=${{ github.event.pull_request.head.ref }}" >> "$GITHUB_OUTPUT"
+          else
+            REF="${{ inputs.ref }}"
+            echo "ref=${REF:-${{ github.ref }}}"      >> "$GITHUB_OUTPUT"
+            echo "pr="                                >> "$GITHUB_OUTPUT"
+            echo "branch=${{ github.ref_name }}"      >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── Checkout ────────────────────────────────────────────────────────────
+      # Reached only after all three security gates above have passed.
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref:         ${{ steps.meta.outputs.ref }}
+          fetch-depth: 0
+
+      # ── Build label (version string used in artifact names + PR comment) ────
+      - name: Compute build label
+        id: label
+        run: |
+          SHA=$(git rev-parse --short=8 HEAD)
+          PR="${{ steps.meta.outputs.pr }}"
+          BRANCH="${{ steps.meta.outputs.branch }}"
+
+          CONF_VERSION=$(
+            grep '"version"' src-tauri/tauri.conf.json \
+            | head -1 \
+            | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/'
+          )
+
+          if [ -n "$PR" ]; then
+            ARTIFACT_NAME="skill-preview-pr${PR}-${SHA}"
+            BUILD_TITLE="Preview — PR #${PR} (${BRANCH}) @ ${SHA}"
+          else
+            SAFE_BRANCH="${BRANCH//\//-}"
+            ARTIFACT_NAME="skill-preview-${SAFE_BRANCH}-${SHA}"
+            BUILD_TITLE="Preview — ${BRANCH} @ ${SHA}"
+          fi
+
+          echo "sha=$SHA"                       >> "$GITHUB_OUTPUT"
+          echo "artifact_name=$ARTIFACT_NAME"   >> "$GITHUB_OUTPUT"
+          echo "build_title=$BUILD_TITLE"       >> "$GITHUB_OUTPUT"
+          echo "conf_version=$CONF_VERSION"     >> "$GITHUB_OUTPUT"
+          # Also expose as env var so later steps can read it easily.
+          echo "VERSION=$CONF_VERSION"          >> "$GITHUB_ENV"
+
+          echo "Building: $BUILD_TITLE"
+          echo "Artifact: $ARTIFACT_NAME"
+          echo "Version : $CONF_VERSION"
+
+      # ── Rust toolchain ──────────────────────────────────────────────────────
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache Cargo registry + build artifacts
+        uses: Swatinem/rust-cache@v2.9.0
+        with:
+          workspaces: ". -> src-tauri/target"
+
+      # ── Build cache (sccache) ─────────────────────────────────────────────────
+      - name: Setup sccache
+        uses: Mozilla-Actions/sccache-action@v0.0.9
+
+      # ── Node.js ─────────────────────────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Install protoc + OpenMP runtime (macOS)
+        run: brew install protobuf libomp
+
+      - name: i18n sync check
+        run: npm run -s sync:i18n:check
+
+      - name: i18n audit check
+        run: npm run -s audit:i18n:check
+
+      - name: i18n locales check (all non-en locales)
+        run: npm run -s check:i18n:locales
+
+      # ── Validate Apple notarization credentials ──────────────────────────────
+      - name: Validate Apple notarization credentials
+        env:
+          APPLE_ID:       ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID:  ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          echo "Checking notarization credentials…"
+          if ! xcrun notarytool history \
+                --apple-id  "$APPLE_ID"      \
+                --password  "$APPLE_PASSWORD" \
+                --team-id   "$APPLE_TEAM_ID"  \
+                --output-format json 2>&1 | grep -q '"history"'; then
+            echo "::error::Apple notarization credentials are invalid."
+            echo "::error::Generate a fresh app-specific password at:"
+            echo "::error::  https://appleid.apple.com → App-Specific Passwords"
+            echo "::error::Then update APPLE_PASSWORD in: Settings → Environments → Release"
+            exit 1
+          fi
+          echo "✓ Notarization credentials are valid."
+
+      # ── Import Apple Developer certificate into a temporary keychain ─────────
+      - name: Import Apple Developer certificate
+        env:
+          APPLE_CERTIFICATE:          ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH"         >> "$GITHUB_ENV"
+          echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          echo -n "$APPLE_CERTIFICATE" \
+            | base64 --decode -o "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12"     \
+            -k "$KEYCHAIN_PATH"                        \
+            -P "$APPLE_CERTIFICATE_PASSWORD"            \
+            -T /usr/bin/codesign                        \
+            -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+          security set-key-partition-list \
+            -S apple-tool:,apple:         \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user \
+            -s "$KEYCHAIN_PATH" login.keychain
+
+      # ── Compile: frontend + Rust binary ──────────────────────────────────────
+      # Identical rationale to release-mac.yml — see that file for full details.
+      # --features custom-protocol tells Tauri to embed the SvelteKit build
+      # output and serve it via the custom:// protocol instead of connecting
+      # to the dev server (localhost:1420).
+      - name: Compile (frontend + Rust)
+        env:
+          RUSTC_WRAPPER: sccache
+          CMAKE_C_COMPILER_LAUNCHER:   sccache
+          CMAKE_CXX_COMPILER_LAUNCHER: sccache
+        run: |
+          npm run build
+          cargo build -p skill --release --locked --target aarch64-apple-darwin --features custom-protocol
+
+      # ── Assemble .app bundle ──────────────────────────────────────────────
+      - name: Create .app bundle
+        run: |
+          APP_NAME="NeuroSkill"
+          BUNDLE_DIR="src-tauri/target/aarch64-apple-darwin/release/bundle"
+          APP_BUNDLE="$BUNDLE_DIR/macos/${APP_NAME}.app"
+
+          mkdir -p "$APP_BUNDLE/Contents/MacOS"
+          mkdir -p "$APP_BUNDLE/Contents/Resources"
+
+          cp "src-tauri/target/aarch64-apple-darwin/release/skill" \
+             "$APP_BUNDLE/Contents/MacOS/skill"
+          chmod +x "$APP_BUNDLE/Contents/MacOS/skill"
+
+          cp "src-tauri/icons/icon.icns" \
+             "$APP_BUNDLE/Contents/Resources/icon.icns"
+
+          cp -R "src-tauri/resources/neutts-samples" \
+                "$APP_BUNDLE/Contents/Resources/"
+
+          # All lines inside <<PYEOF are indented 10 spaces to stay inside the
+          # YAML literal block scalar.  Python sees them at column 0 after YAML
+          # strips the prefix — valid for top-level code.
+            python3 - "$APP_BUNDLE/Contents" "${{ steps.label.outputs.conf_version }}" <<PYEOF
+          import plistlib, sys, os
+          contents, version = sys.argv[1], sys.argv[2]
+          with open("src-tauri/Info.plist", "rb") as f:
+              custom = plistlib.load(f)
+          base = {
+              "CFBundleIdentifier":         "com.neuroskill.skill",
+              "CFBundleExecutable":         "skill",
+              "CFBundleName":               "NeuroSkill",
+              "CFBundleDisplayName":        "NeuroSkill",
+              "CFBundleVersion":            version,
+              "CFBundleShortVersionString": version,
+              "CFBundlePackageType":        "APPL",
+              "CFBundleSignature":          "????",
+              "NSHighResolutionCapable":    True,
+              "NSRequiresAquaSystemAppearance": False,
+              "LSMinimumSystemVersion":     "11.0",
+              "CFBundleIconFile":           "icon",
+          }
+          merged = {**base, **custom}
+          out = os.path.join(contents, "Info.plist")
+          with open(out, "wb") as f:
+              plistlib.dump(merged, f, fmt=plistlib.FMT_XML)
+          print(f"Info.plist written to {out}")
+          for k, v in sorted(merged.items()):
+              print(f"  {k} = {v!r}")
+          PYEOF
+
+          echo "Bundle contents:"
+          find "$APP_BUNDLE" -maxdepth 3 | sort
+
+      # ── Sign .app + create DMG (background, README, CHANGELOG, LICENSE) ─────
+      #
+      # Uses sindresorhus/create-dmg via scripts/create-macos-dmg.sh which
+      # signs .app, creates DMG with composed icon + Retina background + SLA,
+      # signs the DMG, and notarizes with Apple.
+      - name: Install DMG dependencies
+        run: |
+          npm install --global appdmg
+          pip3 install --quiet Pillow
+
+      - name: Sign .app + Create DMG
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID:               ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD:         ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID:          ${{ secrets.APPLE_TEAM_ID }}
+        run: bash scripts/create-macos-dmg.sh aarch64-apple-darwin
+
+      # ── Create updater artifact from the signed + stapled .app ─────────────
+      # Runs after DMG so the .app is already notarized and stapled.
+      - name: Recreate updater artifact from signed .app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY:          ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          BUNDLE_DIR="src-tauri/target/aarch64-apple-darwin/release/bundle"
+          APP_BUNDLE="$(find "$BUNDLE_DIR/macos" -name "*.app" -maxdepth 1 | head -1)"
+
+          find "$BUNDLE_DIR/macos" \
+            \( -name "*.app.tar.gz" -o -name "*.app.tar.gz.sig" \) -delete
+
+          TAR_PATH="$BUNDLE_DIR/macos/$(basename "$APP_BUNDLE").tar.gz"
+          tar -czf "$TAR_PATH" \
+            -C "$(dirname "$APP_BUNDLE")" "$(basename "$APP_BUNDLE")"
+
+          npx tauri signer sign -f "$TAR_PATH"
+
+      # ── Always delete the temporary keychain ─────────────────────────────────
+      - name: Delete temporary keychain
+        if: always()
+        run: security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+
+      # ── Locate build artifacts ───────────────────────────────────────────────
+      - name: Collect artifact paths
+        id: artifacts
+        run: |
+          BUNDLE_DIR="src-tauri/target/aarch64-apple-darwin/release/bundle"
+
+          APP_TAR="$(find "$BUNDLE_DIR/macos" \
+                       -name "*.app.tar.gz" ! -name "*.sig" \
+                       -maxdepth 1 | head -1)"
+          APP_SIG="$(find "$BUNDLE_DIR/macos" \
+                       -name "*.app.tar.gz.sig" \
+                       -maxdepth 1 | head -1)"
+          DMG="$(find "$BUNDLE_DIR/dmg" \
+                   -name "*.dmg" \
+                   -maxdepth 1 | head -1)"
+
+          if [ -z "$APP_TAR" ] || [ -z "$APP_SIG" ] || [ -z "$DMG" ]; then
+            echo "::error::One or more expected build artifacts are missing."
+            echo "  APP_TAR : ${APP_TAR:-(not found)}"
+            echo "  APP_SIG : ${APP_SIG:-(not found)}"
+            echo "  DMG     : ${DMG:-(not found)}"
+            exit 1
+          fi
+
+          echo "app_tar=$APP_TAR"  >> "$GITHUB_OUTPUT"
+          echo "app_sig=$APP_SIG"  >> "$GITHUB_OUTPUT"
+          echo "dmg=$DMG"          >> "$GITHUB_OUTPUT"
+
+          echo "Artifacts:"
+          echo "  DMG : $DMG  ($(du -sh "$DMG" | cut -f1))"
+          echo "  TAR : $APP_TAR  ($(du -sh "$APP_TAR" | cut -f1))"
+          echo "  SIG : $APP_SIG"
+
+      - name: Prepare changelog notes for preview artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ steps.label.outputs.conf_version }}"
+          TMP_SECTION="preview-changelog-section.md"
+          PREVIEW_NOTES="preview-notes.md"
+
+          awk -v version="$VERSION" '
+            BEGIN { in_section = 0; found = 0 }
+            $0 ~ ("^## \\[" version "\\]") { in_section = 1; found = 1; next }
+            in_section && $0 ~ /^## \[/ { exit }
+            in_section { print }
+            END { if (!found) exit 2 }
+          ' CHANGELOG.md > "$TMP_SECTION" || true
+
+          {
+            echo "## Changelog"
+            echo
+            if [ -s "$TMP_SECTION" ]; then
+              cat "$TMP_SECTION"
+            else
+              echo "_No changelog section found for version $VERSION in CHANGELOG.md._"
+            fi
+          } > "$PREVIEW_NOTES"
+
+          rm -f "$TMP_SECTION"
+
+      # ── Upload to GitHub Actions artifacts (14-day retention) ────────────────
+      #
+      # Download from:
+      #   Actions → this run → Artifacts section at the bottom of the summary page.
+      #
+      # Contents:
+      #   *.dmg           — installer; drag to /Applications to test
+      #   *.app.tar.gz    — Tauri updater bundle
+      #   *.app.tar.gz.sig — Ed25519 updater signature
+      - name: Upload preview artifacts
+        id: upload
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        with:
+          name:             ${{ steps.label.outputs.artifact_name }}
+          retention-days:   14
+          if-no-files-found: error
+          path: |
+            ${{ steps.artifacts.outputs.dmg }}
+            ${{ steps.artifacts.outputs.app_tar }}
+            ${{ steps.artifacts.outputs.app_sig }}
+            preview-notes.md
+
+      # ── Notify Discord of preview build result ───────────────────────────────
+      - name: Notify Discord of preview build
+        if: always()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          COMMIT_MSG=$(git log -1 --format='%s' | head -c 200)
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          SHA="${{ steps.label.outputs.sha }}"
+          VERSION="${{ steps.label.outputs.conf_version }}"
+          TITLE="${{ steps.label.outputs.build_title }}"
+          ARTIFACT="${{ steps.label.outputs.artifact_name }}"
+          PR="${{ steps.meta.outputs.pr }}"
+          BRANCH="${{ steps.meta.outputs.branch }}"
+
+          if [[ "$JOB_STATUS" == "success" ]]; then
+            COLOR=3066993   # green
+            EMOJI="✅"
+            DESC="Preview build succeeded. Artifact available for 14 days."
+          else
+            COLOR=15158332  # red
+            EMOJI="❌"
+            DESC="Preview build failed. Check the run for details."
+          fi
+
+          PR_FIELD=""
+          if [[ -n "$PR" ]]; then
+            PR_URL="${{ github.server_url }}/${{ github.repository }}/pull/$PR"
+            PR_FIELD="{\"name\": \"PR\", \"value\": \"[#$PR]($PR_URL)\", \"inline\": true},"
+          fi
+
+          curl -s -X POST "$DISCORD_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"$EMOJI Preview Build — \`v$VERSION\` @ \`$SHA\`\",
+                \"description\": \"$DESC\n\n**[View run & download artifact]($RUN_URL)**\",
+                \"url\": \"$RUN_URL\",
+                \"color\": $COLOR,
+                \"fields\": [
+                  $PR_FIELD
+                  {\"name\": \"Branch\",   \"value\": \"\`$BRANCH\`\",   \"inline\": true},
+                  {\"name\": \"Artifact\", \"value\": \"\`$ARTIFACT\`\", \"inline\": true},
+                  {\"name\": \"Commit Message\", \"value\": $(echo "$COMMIT_MSG" | jq -Rs .), \"inline\": false}
+                ],
+                \"footer\": {\"text\": \"${{ github.repository }}\"}
+              }]
+            }"
+
+      # ── Post (or update) a download-link comment on the PR ───────────────────
+      #
+      # Only runs when triggered by the "build" label on a PR.
+      # If a previous preview comment exists on this PR it is edited in-place
+      # rather than creating a new one — keeps the PR thread tidy.
+      - name: Comment on PR with download link
+        if: steps.meta.outputs.pr != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr      = Number('${{ steps.meta.outputs.pr }}');
+            const sha     = '${{ steps.label.outputs.sha }}';
+            const version = '${{ steps.label.outputs.conf_version }}';
+            const title   = '${{ steps.label.outputs.build_title }}';
+            const name    = '${{ steps.label.outputs.artifact_name }}';
+            const runId   = context.runId;
+            const runUrl  = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${runId}`;
+
+            // GitHub Actions artifact download links require authentication.
+            // The run summary page is the best stable public URL.
+            const downloadUrl = `${runUrl}#artifacts`;
+
+            const MARKER = '<!-- skill-preview-build -->';
+            const body = [
+              MARKER,
+              `### 🏗️ Preview build ready — \`v${version}\` @ \`${sha}\``,
+              '',
+              'A **signed & notarised** macOS build of this PR is available. ' +
+              'Artifacts expire after **14 days**.',
+              '',
+              `| | |`,
+              `|---|---|`,
+              `| 📦 Download | **[${name}](${downloadUrl})** |`,
+              `| Run | [#${runId}](${runUrl}) |`,
+              `| SHA | \`${sha}\` |`,
+              `| Version | \`${version}\` |`,
+              '',
+              '**Installation:** download the `.dmg`, open it, drag the app to `/Applications`.',
+              '',
+              '> ⚠️ This is a **pre-release validation build** — not an official release.',
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner:        context.repo.owner,
+              repo:         context.repo.repo,
+              issue_number: pr,
+            });
+
+            // Find the previous preview comment by the bot marker, if any.
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes(MARKER)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner:      context.repo.owner,
+                repo:       context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+              console.log(`Updated existing comment #${existing.id}`);
+            } else {
+              const { data: created } = await github.rest.issues.createComment({
+                owner:        context.repo.owner,
+                repo:         context.repo.repo,
+                issue_number: pr,
+                body,
+              });
+              console.log(`Created comment #${created.id}`);
+            }

@@ -1,0 +1,64 @@
+[gd_scene load_steps=2 format=3 uid="uid://b8xn7y3v0l5k4"]
+
+[sub_resource type="Rectangle2D" id="Rectangle2D_1"]
+size = Vector2i(1024, 768)
+color = Color("#e8f4f8")
+
+[node name="Main" type="Node2D"]
+[node name="Office" type="Node2D" parent="."]
+position = Vector2i(512, 384)
+
+[node name="Background" type="ColorRect" parent="Office"]
+offset_right = 1024.0
+offset_bottom = 768.0
+color = Color("#f5f5f5")
+
+[node name="Floor" type="ColorRect" parent="Office"]
+offset_right = 1024.0
+offset_bottom = 768.0
+color = Color("#d4d4d8")
+
+[node name="Player" type="Node2D" parent="Office"]
+position = Vector2i(100, 100)
+
+[node name="Sprite2D" type="Sprite2D" parent="Office/Player"]
+texture = SubResource("Rectangle2D_1")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Office/Player"]
+position = Vector2i(16, 16)
+shape = SubResource("Rectangle2D_1")
+
+[node name="Camera2D" type="Camera2D" parent="Office/Player"]
+position = Vector2i(0, 0)
+
+[node name="OfficeFurniture" type="Node2D" parent="Office"]
+
+[node name="Desk1" type="Node2D" parent="Office/OfficeFurniture"]
+position = Vector2i(300, 200)
+
+[node name="Sprite2D" type="Sprite2D" parent="Office/OfficeFurniture/Desk1"]
+texture = SubResource("Rectangle2D_1")
+modulate = Color("#8B4513")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Office/OfficeFurniture/Desk1"]
+shape = SubResource("Rectangle2D_1")
+
+[node name="Desk2" type="Node2D" parent="Office/OfficeFurniture"]
+position = Vector2i(600, 200)
+
+[node name="Sprite2D" type="Sprite2D" parent="Office/OfficeFurniture/Desk2"]
+texture = SubResource("Rectangle2D_1")
+modulate = Color("#8B4513")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Office/OfficeFurniture/Desk2"]
+shape = SubResource("Rectangle2D_1")
+
+[node name="CoffeeMachine" type="Node2D" parent="Office/OfficeFurniture"]
+position = Vector2i(850, 400)
+
+[node name="Sprite2D" type="Sprite2D" parent="Office/OfficeFurniture/CoffeeMachine"]
+texture = SubResource("Rectangle2D_1")
+modulate = Color("#C0C0C0")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Office/OfficeFurniture/CoffeeMachine"]
+shape = SubResource("Rectangle2D_1")

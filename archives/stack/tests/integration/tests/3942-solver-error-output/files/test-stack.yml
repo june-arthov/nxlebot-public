@@ -1,0 +1,6 @@
+resolver: lts-24.24
+
+packages: []
+
+extra-deps:
+- ./one-deps

@@ -1,0 +1,5 @@
+snapshot: lts-24.24
+
+packages:
+- ./local-mmorph
+- ./uses-mmorph

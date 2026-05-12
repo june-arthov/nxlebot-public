@@ -1,0 +1,53 @@
+pre,
+code {
+    font-family: 'Ubuntu Mono', monospace;
+}
+
+h1, h2 {
+    font-family: $font-family-serif;
+}
+
+h1 {
+    &.name {
+        font-size: $font-size-h1 * 2.2;
+
+        @media (max-width: $screen-xs-max) {
+            font-size: $font-size-h1;
+        }
+
+        font-weight: 900;
+
+        img {
+            vertical-align: bottom;
+
+            @media (max-width: $screen-xs-max) {
+                width: 68px;
+            }
+        }
+    }
+}
+
+.branding {
+    @media (max-width: $screen-xs-max) {
+        h4 {
+            text-align: center;
+        }
+    }
+}
+
+hr {
+    border-top: 4px solid #5d4f85;
+}
+
+.navbar-brand .logo img {
+    height: 1em;
+
+    transition: all 200ms ease-in-out;
+    opacity: 0.9;
+    filter: contrast(50%);
+
+    &:hover {
+        opacity: 1;
+        filter: contrast(100%);
+    }
+}

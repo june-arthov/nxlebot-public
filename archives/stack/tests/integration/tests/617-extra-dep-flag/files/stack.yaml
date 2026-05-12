@@ -1,0 +1,7 @@
+snapshot: ghc-9.10.3
+flags:
+  text:
+    integer-simple: false
+extra-deps:
+- text-1.2.0.3
+packages: []

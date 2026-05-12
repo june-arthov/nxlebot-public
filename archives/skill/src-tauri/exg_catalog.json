@@ -1,0 +1,691 @@
+{
+  "active_model": "ZUNA",
+  "families": {
+    "zuna": {
+      "name": "ZUNA",
+      "description": "Zyphra's 380M-parameter masked diffusion autoencoder for EEG. Denoises, reconstructs missing channels, and upsamples scalp-EEG signals. Trained on ~2M channel-hours.",
+      "repo": "Zyphra/ZUNA",
+      "tags": [
+        "eeg",
+        "embedding",
+        "default"
+      ],
+      "weights_file": "model-00001-of-00001.safetensors",
+      "config_file": "config.json",
+      "params_m": 380,
+      "embed_dim": 256,
+      "paper": "https://arxiv.org/abs/2602.18478",
+      "doi": "10.48550/arXiv.2602.18478"
+    },
+    "luna-base": {
+      "name": "LUNA Base",
+      "description": "PulpBio's topology-agnostic EEG foundation model — base variant (7M params). Uses cross-attention to map arbitrary channel layouts to a fixed latent space. Pretrained on >21,000 hours of EEG.",
+      "repo": "PulpBio/LUNA",
+      "tags": [
+        "eeg",
+        "embedding",
+        "topology-agnostic",
+        "small"
+      ],
+      "weights_file": "LUNA_base.safetensors",
+      "config_file": "config.json",
+      "params_m": 7,
+      "embed_dim": 256,
+      "paper": "https://arxiv.org/abs/2510.22257",
+      "doi": "10.48550/arXiv.2510.22257"
+    },
+    "luna-large": {
+      "name": "LUNA Large",
+      "description": "PulpBio's topology-agnostic EEG foundation model — large variant (43M params). Deeper temporal encoder and wider unification module than base.",
+      "repo": "PulpBio/LUNA",
+      "tags": [
+        "eeg",
+        "embedding",
+        "topology-agnostic",
+        "medium"
+      ],
+      "weights_file": "LUNA_large.safetensors",
+      "config_file": "config.json",
+      "params_m": 43,
+      "embed_dim": 512,
+      "paper": "https://arxiv.org/abs/2510.22257",
+      "doi": "10.48550/arXiv.2510.22257"
+    },
+    "luna-huge": {
+      "name": "LUNA Huge",
+      "description": "PulpBio's topology-agnostic EEG foundation model — huge variant (311M params). Highest quality embeddings; needs ≥ 8 GB VRAM.",
+      "repo": "PulpBio/LUNA",
+      "tags": [
+        "eeg",
+        "embedding",
+        "topology-agnostic",
+        "large"
+      ],
+      "weights_file": "LUNA_huge.safetensors",
+      "config_file": "config.json",
+      "params_m": 311,
+      "embed_dim": 1024,
+      "paper": "https://arxiv.org/abs/2510.22257",
+      "doi": "10.48550/arXiv.2510.22257"
+    },
+    "reve-base": {
+      "name": "REVE Base",
+      "description": "Brain-BZH REVE foundation model — 72M params, 512-dim embeddings. Pretrained on 60,000+ hours of EEG from 92 datasets (25,000 subjects). 4D Fourier positional encoding for arbitrary electrode configurations. NeurIPS 2025.",
+      "repo": "brain-bzh/reve-base",
+      "tags": [
+        "eeg",
+        "embedding",
+        "topology-agnostic",
+        "medium"
+      ],
+      "weights_file": "model.safetensors",
+      "config_file": "config.json",
+      "params_m": 72,
+      "embed_dim": 512,
+      "paper": "https://arxiv.org/abs/2510.21585",
+      "doi": "10.48550/arXiv.2510.21585"
+    },
+    "reve-large": {
+      "name": "REVE Large",
+      "description": "Brain-BZH REVE foundation model — ~400M params, 1250-dim embeddings. Largest REVE variant; highest quality EEG embeddings. NeurIPS 2025.",
+      "repo": "brain-bzh/reve-large",
+      "tags": [
+        "eeg",
+        "embedding",
+        "topology-agnostic",
+        "large"
+      ],
+      "weights_file": "model.safetensors",
+      "config_file": "config.json",
+      "params_m": 400,
+      "embed_dim": 1250,
+      "paper": "https://arxiv.org/abs/2510.21585",
+      "doi": "10.48550/arXiv.2510.21585"
+    },
+    "opentslm": {
+      "name": "OpenTSLM",
+      "description": "Time-Series Language Model for reasoning over multivariate medical data. Trainable TransformerCNN encoder (128-dim) + frozen LLM backbone (Qwen3 GGUF via llama.cpp). 5-stage curriculum: wearable MCQ, captioning, HAR chain-of-thought, sleep-stage EEG CoT, ECG arrhythmia CoT. Processes accelerometer, gyroscope, EEG, and ECG.",
+      "repo": "StanfordBDHG/OpenTSLM",
+      "tags": [
+        "eeg",
+        "ecg",
+        "accelerometer",
+        "gyroscope",
+        "multimodal",
+        "language",
+        "wearable",
+        "sleep",
+        "embedding",
+        "small"
+      ],
+      "weights_file": "model.safetensors",
+      "config_file": "config.json",
+      "params_m": 5,
+      "embed_dim": 128,
+      "paper": "https://arxiv.org/abs/2510.02410",
+      "doi": "10.48550/arXiv.2510.02410"
+    },
+    "sensorlm": {
+      "name": "SensorLM",
+      "description": "Sensor-language foundation model family (CLIP/CoCa variants) for wearable sensor data + natural language. Pretrained on 59.7M hours from 103,000+ people. Multimodal: accelerometer, PPG (heart rate), skin temperature, EDA, gyroscope. Zero-shot recognition, sensor captioning, and cross-modal retrieval.",
+      "repo": "google/sensorlm",
+      "tags": [
+        "ppg",
+        "accelerometer",
+        "eda",
+        "temperature",
+        "gyroscope",
+        "multimodal",
+        "language",
+        "wearable",
+        "embedding",
+        "medium"
+      ],
+      "weights_file": "model.safetensors",
+      "config_file": "config.json",
+      "params_m": 100,
+      "embed_dim": 512,
+      "paper": "https://arxiv.org/abs/2506.09108",
+      "doi": "10.48550/arXiv.2506.09108"
+    },
+    "sleepfm": {
+      "name": "SleepFM",
+      "description": "Contrastive multimodal sleep foundation model (~3M params, 128-dim). SetTransformer with attention pooling over variable-channel PSG. Processes 4 modalities independently: BAS (10-ch EEG+EOG), RESP (7-ch respiratory+SpO2), EKG (2-ch), EMG (4-ch chin+legs). 128 Hz. Published in Nature Medicine.",
+      "repo": "zou-group/sleepfm-clinical",
+      "tags": [
+        "eeg",
+        "ecg",
+        "emg",
+        "eog",
+        "respiratory",
+        "spo2",
+        "multimodal",
+        "sleep",
+        "embedding",
+        "small"
+      ],
+      "weights_file": "model_base.safetensors",
+      "config_file": "config.json",
+      "params_m": 3,
+      "embed_dim": 128,
+      "paper": "https://www.nature.com/articles/s41591-025-04133-4",
+      "doi": "10.1038/s41591-025-04133-4"
+    },
+    "sleeplm": {
+      "name": "SleepLM",
+      "description": "Multimodal CoCa (Contrastive Captioners) model aligning polysomnography with natural language (~385M params, embed_dim=512). Dual-axis transformer with RoPE, SwiGLU, RMSNorm. 10-channel PSG input: EEG (C3/C4), ECG, EMG chin, EOG (E1/E2), respiratory (ABD/THX/AF), body position. 64 Hz, 30s epochs. Generates natural-language sleep reports.",
+      "repo": "yang-ai-lab/SleepLM",
+      "tags": [
+        "eeg",
+        "ecg",
+        "emg",
+        "eog",
+        "respiratory",
+        "multimodal",
+        "sleep",
+        "language",
+        "embedding",
+        "large"
+      ],
+      "weights_file": "model.safetensors",
+      "config_file": "sleep_coca_base_dualtransformer.json",
+      "params_m": 385,
+      "embed_dim": 512,
+      "paper": "https://arxiv.org/abs/2602.23605",
+      "doi": "10.48550/arXiv.2602.23605"
+    },
+    "osf-base": {
+      "name": "OSF Base",
+      "description": "Open Sleep Foundation ViT-Base (~86M params, 768-dim). DINO+iBOT self-distillation on 166,500 hours of polysomnography from 9 cohorts. Multimodal 12-channel PSG input: EEG, ECG, EMG, EOG, respiratory (ABD, THX, NP, SN). 64 Hz, 30s epochs.",
+      "repo": "yang-ai-lab/OSF-Base",
+      "tags": [
+        "eeg",
+        "ecg",
+        "emg",
+        "eog",
+        "respiratory",
+        "multimodal",
+        "sleep",
+        "embedding",
+        "medium"
+      ],
+      "weights_file": "osf_backbone.pth",
+      "config_file": null,
+      "params_m": 86,
+      "embed_dim": 768,
+      "paper": "https://arxiv.org/abs/2603.00190",
+      "doi": "10.48550/arXiv.2603.00190"
+    },
+    "signaljepa": {
+      "name": "SignalJEPA",
+      "description": "S-JEPA PreLocal — Joint Embedding Predictive Architecture for EEG with dynamic spatial attention. Spatial convolution + multi-layer convolutional feature encoder (embed_dim=64). Designed for seamless cross-dataset transfer. Graz BCI Conference 2024.",
+      "repo": "braindecode/SignalJEPA-PreLocal-pretrained",
+      "tags": [
+        "eeg",
+        "embedding",
+        "tiny"
+      ],
+      "weights_file": "model.safetensors",
+      "config_file": "config.json",
+      "params_m": 0.5,
+      "embed_dim": 64,
+      "paper": "https://arxiv.org/abs/2403.11772",
+      "doi": "10.3217/978-3-99161-014-4-003"
+    },
+    "labram": {
+      "name": "LaBraM",
+      "description": "Large Brain Model — BEiTv2-inspired transformer pretrained on large-scale EEG with neural tokenization. Q/K normalization, gamma residual scaling, and channel-aware 10-20 position embeddings (embed_dim=200). ICLR 2024.",
+      "repo": "braindecode/labram-pretrained",
+      "tags": [
+        "eeg",
+        "embedding",
+        "small"
+      ],
+      "weights_file": "model.safetensors",
+      "config_file": "config.json",
+      "params_m": 4,
+      "embed_dim": 200,
+      "paper": "https://arxiv.org/abs/2405.18765",
+      "doi": "10.48550/arXiv.2405.18765"
+    },
+    "eegpt": {
+      "name": "EEGPT",
+      "description": "Pretrained Transformer for universal EEG representation (~10M params, embed_dim=512). Dual self-supervised learning with spatio-temporal alignment and masked reconstruction. Channel embeddings for spatial flexibility. NeurIPS 2024.",
+      "repo": "braindecode/eegpt-pretrained",
+      "tags": [
+        "eeg",
+        "embedding",
+        "small"
+      ],
+      "weights_file": "model.safetensors",
+      "config_file": "config.json",
+      "params_m": 10,
+      "embed_dim": 512,
+      "paper": "https://proceedings.neurips.cc/paper_files/paper/2024/hash/4540d267eeec4e5dbd9dae9448f0b739-Abstract-Conference.html",
+      "doi": "10.52202/079017-1239"
+    },
+    "tribev2": {
+      "name": "TRIBE v2",
+      "description": "Meta AI's multimodal fMRI brain encoding foundation model (177M params, hidden=1152). Predicts cortical fMRI responses to naturalistic stimuli from video, audio, and text. Combines LLaMA 3.2-3B (text), V-JEPA2 (video), and Wav2Vec-BERT (audio) features through an 8-layer 8-head Transformer encoder mapped onto the fsaverage5 cortical surface (~20,484 vertices). Pretrained on 4 fMRI datasets: Algonauts2025, Lahner2024, Lebel2023, Wen2017. d'Ascoli et al., 2026.",
+      "repo": "eugenehp/tribev2",
+      "tags": [
+        "fmri",
+        "brain-encoding",
+        "multimodal",
+        "video",
+        "audio",
+        "text",
+        "cortical",
+        "large"
+      ],
+      "weights_file": "model.safetensors",
+      "config_file": "config.yaml",
+      "extra_files": [
+        "build_args.json"
+      ],
+      "params_m": 177,
+      "embed_dim": 1152,
+      "paper": "https://github.com/facebookresearch/tribev2",
+      "doi": null,
+      "preview_image": "/exg/tribev2-brain.png",
+      "components": {
+        "brain": {
+          "name": "Brain Encoder",
+          "description": "8-layer Transformer encoder with ScaleNorm + RoPE, projects multimodal features onto fsaverage5 cortical surface (20,484 vertices).",
+          "repo": "eugenehp/tribev2",
+          "weights_file": "model.safetensors",
+          "config_file": "config.yaml",
+          "extra_files": [
+            "build_args.json"
+          ],
+          "params_m": 177,
+          "required": true
+        },
+        "text": {
+          "name": "Text Encoder — LLaMA 3.2-3B",
+          "description": "LLaMA 3.2-3B text feature extractor. Extracts per-token hidden states at selected layers, resampled to 2 Hz. Runs via llama.cpp (GGUF). Output: [2, 3072, T].",
+          "repo": "bartowski/Llama-3.2-3B-Instruct-GGUF",
+          "weights_file": "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+          "config_file": null,
+          "params_m": 3000,
+          "required": false,
+          "note": "Any LLaMA-3.2-3B GGUF quantisation works. Shared with the LLM engine when the llm feature is enabled."
+        },
+        "audio": {
+          "name": "Audio Encoder — Wav2Vec-BERT 2.0",
+          "description": "24-layer Conformer (600M params, hidden=1024). Extracts intermediate hidden states from raw 16 kHz audio, resampled to 2 Hz. Output: [2, 1024, T].",
+          "repo": "facebook/w2v-bert-2.0",
+          "weights_file": "model.safetensors",
+          "config_file": "config.json",
+          "params_m": 600,
+          "required": false
+        },
+        "video": {
+          "name": "Video Encoder — V-JEPA2 ViT-G",
+          "description": "40-layer ViT-Giant (1.1B params, hidden=1408). Processes 64-frame clips at 16 FPS (4s), extracts hidden states at selected layers, mean-pools spatial tokens, resampled to 2 Hz. Output: [2, 1408, T].",
+          "repo": "facebook/vjepa2-vitg-fpc64-256",
+          "weights_file": "model.safetensors",
+          "config_file": "config.json",
+          "params_m": 1100,
+          "required": false
+        }
+      }
+    },
+    "neurorvq": {
+      "name": "NeuroRVQ",
+      "description": "NeuroRVQ biosignal tokenizer — residual vector quantization for EEG, ECG, and EMG. 4-branch encoder with patch-based FFT + RVQ codebooks. Modality-specific weights for tokenization and foundation model encoding. Burn 0.20 backend.",
+      "repo": "eugenehp/NeuroRVQ",
+      "tags": [
+        "eeg",
+        "ecg",
+        "emg",
+        "tokenizer",
+        "embedding",
+        "multimodal",
+        "medium"
+      ],
+      "weights_file": "NeuroRVQ_EEG_tokenizer_v1.safetensors",
+      "config_file": "flags/NeuroRVQ_EEG_v1.yml",
+      "params_m": 76,
+      "embed_dim": 200,
+      "paper": null,
+      "doi": null,
+      "components": {
+        "eeg-tokenizer": {
+          "name": "EEG Tokenizer",
+          "description": "NeuroRVQ EEG tokenizer — patch-based FFT encoder with 4-branch RVQ codebooks for EEG signals.",
+          "repo": "eugenehp/NeuroRVQ",
+          "weights_file": "NeuroRVQ_EEG_tokenizer_v1.safetensors",
+          "config_file": "flags/NeuroRVQ_EEG_v1.yml",
+          "params_m": 76,
+          "required": true
+        },
+        "ecg-tokenizer": {
+          "name": "ECG Tokenizer",
+          "description": "NeuroRVQ ECG tokenizer — patch-based FFT encoder with 4-branch RVQ codebooks for ECG signals.",
+          "repo": "eugenehp/NeuroRVQ",
+          "weights_file": "NeuroRVQ_ECG_tokenizer_v1.safetensors",
+          "config_file": "flags/NeuroRVQ_ECG_v1.yml",
+          "params_m": 68,
+          "required": false
+        },
+        "emg-tokenizer": {
+          "name": "EMG Tokenizer",
+          "description": "NeuroRVQ EMG tokenizer — patch-based FFT encoder with 4-branch RVQ codebooks for EMG signals.",
+          "repo": "eugenehp/NeuroRVQ",
+          "weights_file": "NeuroRVQ_EMG_tokenizer_v1.safetensors",
+          "config_file": "flags/NeuroRVQ_EMG_v1.yml",
+          "params_m": 144,
+          "required": false
+        },
+        "eeg-foundation": {
+          "name": "EEG Foundation Model",
+          "description": "NeuroRVQ EEG foundation model — deeper encoder for representation learning and downstream tasks.",
+          "repo": "eugenehp/NeuroRVQ",
+          "weights_file": "NeuroRVQ_EEG_foundation_model_v1.safetensors",
+          "config_file": "flags/NeuroRVQ_EEG_v1.yml",
+          "params_m": 76,
+          "required": false
+        },
+        "emg-foundation": {
+          "name": "EMG Foundation Model",
+          "description": "NeuroRVQ EMG foundation model — deeper encoder for EMG representation learning.",
+          "repo": "eugenehp/NeuroRVQ",
+          "weights_file": "NeuroRVQ_EMG_foundation_model_v1.safetensors",
+          "config_file": "flags/NeuroRVQ_EMG_v1.yml",
+          "params_m": 144,
+          "required": false
+        }
+      }
+    },
+    "cbramod": {
+      "name": "CBraMod",
+      "description": "Criss-Cross Brain Foundation Model (~4M params, d_model=200). Uses criss-cross attention to separately model spatial (channel) and temporal (patch) dependencies. Pretrained on Temple University Hospital EEG Corpus via masked patch reconstruction. ICLR 2025.",
+      "repo": "braindecode/cbramod-pretrained",
+      "tags": [
+        "eeg",
+        "embedding",
+        "small"
+      ],
+      "weights_file": "model.safetensors",
+      "config_file": "config.json",
+      "params_m": 4,
+      "embed_dim": 200,
+      "paper": "https://arxiv.org/abs/2412.07236",
+      "doi": "10.48550/arXiv.2412.07236"
+    },
+    "steegformer-small": {
+      "name": "ST-EEGFormer Small",
+      "description": "ST-EEGFormer: ViT-based EEG foundation model pre-trained via Masked Autoencoder (MAE) reconstruction. Winner of NeurIPS 2025 EEG Foundation Challenge, accepted at ICLR 2026. Input: 128 Hz, up to 142 channels, ≤6 s segments.",
+      "repo": "eugenehp/ST-EEGFormer",
+      "tags": [
+        "eeg",
+        "embedding",
+        "topology-agnostic"
+      ],
+      "weights_file": "ST-EEGFormer_small_encoder.safetensors",
+      "config_file": "config.json",
+      "params_m": 30,
+      "embed_dim": 512,
+      "paper": "https://arxiv.org/abs/2502.12048",
+      "doi": "10.48550/arXiv.2502.12048"
+    },
+    "steegformer-base": {
+      "name": "ST-EEGFormer Base",
+      "description": "ST-EEGFormer: ViT-based EEG foundation model pre-trained via Masked Autoencoder (MAE) reconstruction. Winner of NeurIPS 2025 EEG Foundation Challenge, accepted at ICLR 2026. Input: 128 Hz, up to 142 channels, ≤6 s segments.",
+      "repo": "eugenehp/ST-EEGFormer",
+      "tags": [
+        "eeg",
+        "embedding",
+        "topology-agnostic"
+      ],
+      "weights_file": "ST-EEGFormer_base_encoder.safetensors",
+      "config_file": "config.json",
+      "params_m": 86,
+      "embed_dim": 768,
+      "paper": "https://arxiv.org/abs/2502.12048",
+      "doi": "10.48550/arXiv.2502.12048"
+    },
+    "steegformer-large": {
+      "name": "ST-EEGFormer Large",
+      "description": "ST-EEGFormer: ViT-based EEG foundation model pre-trained via Masked Autoencoder (MAE) reconstruction. Winner of NeurIPS 2025 EEG Foundation Challenge, accepted at ICLR 2026. Input: 128 Hz, up to 142 channels, ≤6 s segments.",
+      "repo": "eugenehp/ST-EEGFormer",
+      "tags": [
+        "eeg",
+        "embedding",
+        "topology-agnostic"
+      ],
+      "weights_file": "ST-EEGFormer_large_encoder.safetensors",
+      "config_file": "config.json",
+      "params_m": 300,
+      "embed_dim": 1024,
+      "paper": "https://arxiv.org/abs/2502.12048",
+      "doi": "10.48550/arXiv.2502.12048"
+    }
+  },
+  "models": [
+    {
+      "family": "zuna",
+      "filename": "model-00001-of-00001.safetensors",
+      "size_mb": 100,
+      "description": "Default ZUNA weights — single safetensors file",
+      "recommended": true
+    },
+    {
+      "family": "luna-base",
+      "filename": "LUNA_base.safetensors",
+      "size_mb": 28,
+      "description": "LUNA base variant — 7M params, smallest and fastest",
+      "recommended": true
+    },
+    {
+      "family": "luna-large",
+      "filename": "LUNA_large.safetensors",
+      "size_mb": 172,
+      "description": "LUNA large variant — 43M params, better quality embeddings"
+    },
+    {
+      "family": "luna-huge",
+      "filename": "LUNA_huge.safetensors",
+      "size_mb": 1244,
+      "description": "LUNA huge variant — 311M params, highest quality, most VRAM"
+    },
+    {
+      "family": "reve-base",
+      "filename": "model.safetensors",
+      "size_mb": 288,
+      "description": "REVE base — 72M params, 512-dim embeddings",
+      "recommended": true
+    },
+    {
+      "family": "reve-large",
+      "filename": "model.safetensors",
+      "size_mb": 1600,
+      "description": "REVE large — ~400M params, 1250-dim embeddings"
+    },
+    {
+      "family": "cbramod",
+      "filename": "model.safetensors",
+      "size_mb": 16,
+      "description": "CBraMod — ~4M params, criss-cross attention, d_model=200",
+      "recommended": true
+    },
+    {
+      "family": "eegpt",
+      "filename": "model.safetensors",
+      "size_mb": 40,
+      "description": "EEGPT — ~10M params, dual self-supervised, embed_dim=512",
+      "recommended": true
+    },
+    {
+      "family": "labram",
+      "filename": "model.safetensors",
+      "size_mb": 16,
+      "description": "LaBraM — BEiTv2-style, embed_dim=200, neural tokenization",
+      "recommended": true
+    },
+    {
+      "family": "signaljepa",
+      "filename": "model.safetensors",
+      "size_mb": 2,
+      "description": "SignalJEPA PreLocal — spatial conv + conv encoder, embed_dim=64",
+      "recommended": true
+    },
+    {
+      "family": "osf-base",
+      "filename": "osf_backbone.pth",
+      "size_mb": 344,
+      "description": "OSF Base — 86M params, 768-dim, multimodal 12-ch PSG (EEG+ECG+EMG+EOG+respiratory)",
+      "recommended": true
+    },
+    {
+      "family": "sleeplm",
+      "filename": "model.safetensors",
+      "size_mb": 1540,
+      "description": "SleepLM — 385M params, multimodal 10-ch PSG + language, CoCa architecture",
+      "recommended": true
+    },
+    {
+      "family": "sleepfm",
+      "filename": "model_base.safetensors",
+      "size_mb": 12,
+      "description": "SleepFM — ~3M params, 128-dim, contrastive multimodal PSG (EEG+EOG+ECG+EMG+RESP+SpO2)",
+      "recommended": true
+    },
+    {
+      "family": "sensorlm",
+      "filename": "model.safetensors",
+      "size_mb": 400,
+      "description": "SensorLM — sensor-language model, wearable multimodal (PPG+accel+EDA+temp+gyro) + text",
+      "recommended": true
+    },
+    {
+      "family": "tribev2",
+      "component": "brain",
+      "filename": "model.safetensors",
+      "size_mb": 676,
+      "description": "TRIBE v2 brain encoder — safetensors, ready for Rust inference",
+      "recommended": true
+    },
+    {
+      "family": "tribev2",
+      "component": "brain",
+      "filename": "config.yaml",
+      "size_mb": 1,
+      "description": "TRIBE v2 model hyperparameters (hidden dim, depth, heads, modalities)"
+    },
+    {
+      "family": "tribev2",
+      "component": "brain",
+      "filename": "build_args.json",
+      "size_mb": 1,
+      "description": "Feature-extractor build arguments used at training time"
+    },
+    {
+      "family": "tribev2",
+      "component": "text",
+      "filename": "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+      "size_mb": 2130,
+      "description": "LLaMA 3.2-3B Instruct Q4_K_M — text feature extractor for TRIBE v2 (shared with LLM engine)"
+    },
+    {
+      "family": "tribev2",
+      "component": "audio",
+      "filename": "model.safetensors",
+      "size_mb": 2400,
+      "description": "Wav2Vec-BERT 2.0 — 600M param audio feature extractor (facebook/w2v-bert-2.0)"
+    },
+    {
+      "family": "tribev2",
+      "component": "video",
+      "filename": "model.safetensors",
+      "size_mb": 4400,
+      "description": "V-JEPA2 ViT-G — 1.1B param video feature extractor (facebook/vjepa2-vitg-fpc64-256)"
+    },
+    {
+      "family": "opentslm",
+      "filename": "model.safetensors",
+      "size_mb": 20,
+      "description": "OpenTSLM — ~5M trainable params, 128-dim encoder + frozen Qwen3 LLM backbone",
+      "recommended": true
+    },
+    {
+      "family": "neurorvq",
+      "component": "eeg-tokenizer",
+      "filename": "NeuroRVQ_EEG_tokenizer_v1.safetensors",
+      "size_mb": 304,
+      "description": "NeuroRVQ EEG tokenizer — 4-branch RVQ codebook encoder",
+      "recommended": true
+    },
+    {
+      "family": "neurorvq",
+      "component": "eeg-tokenizer",
+      "filename": "flags/NeuroRVQ_EEG_v1.yml",
+      "size_mb": 1,
+      "description": "NeuroRVQ EEG config flags"
+    },
+    {
+      "family": "neurorvq",
+      "component": "ecg-tokenizer",
+      "filename": "NeuroRVQ_ECG_tokenizer_v1.safetensors",
+      "size_mb": 272,
+      "description": "NeuroRVQ ECG tokenizer — 4-branch RVQ codebook encoder"
+    },
+    {
+      "family": "neurorvq",
+      "component": "ecg-tokenizer",
+      "filename": "flags/NeuroRVQ_ECG_v1.yml",
+      "size_mb": 1,
+      "description": "NeuroRVQ ECG config flags"
+    },
+    {
+      "family": "neurorvq",
+      "component": "emg-tokenizer",
+      "filename": "NeuroRVQ_EMG_tokenizer_v1.safetensors",
+      "size_mb": 574,
+      "description": "NeuroRVQ EMG tokenizer — 4-branch RVQ codebook encoder"
+    },
+    {
+      "family": "neurorvq",
+      "component": "emg-tokenizer",
+      "filename": "flags/NeuroRVQ_EMG_v1.yml",
+      "size_mb": 1,
+      "description": "NeuroRVQ EMG config flags"
+    },
+    {
+      "family": "neurorvq",
+      "component": "eeg-foundation",
+      "filename": "NeuroRVQ_EEG_foundation_model_v1.safetensors",
+      "size_mb": 304,
+      "description": "NeuroRVQ EEG foundation model — deeper encoder for representation learning"
+    },
+    {
+      "family": "neurorvq",
+      "component": "emg-foundation",
+      "filename": "NeuroRVQ_EMG_foundation_model_v1.safetensors",
+      "size_mb": 574,
+      "description": "NeuroRVQ EMG foundation model — deeper encoder for EMG representation learning"
+    },
+    {
+      "family": "steegformer-small",
+      "filename": "ST-EEGFormer_small_encoder.safetensors",
+      "size_mb": 98,
+      "description": "ST-EEGFormer small encoder weights — 30M params, 512-dim embeddings",
+      "recommended": false
+    },
+    {
+      "family": "steegformer-base",
+      "filename": "ST-EEGFormer_base_encoder.safetensors",
+      "size_mb": 326,
+      "description": "ST-EEGFormer base encoder weights — 86M params, 768-dim embeddings",
+      "recommended": true
+    },
+    {
+      "family": "steegformer-large",
+      "filename": "ST-EEGFormer_large_encoder.safetensors",
+      "size_mb": 1156,
+      "description": "ST-EEGFormer large encoder weights — 300M params, 1024-dim embeddings",
+      "recommended": false
+    }
+  ]
+}

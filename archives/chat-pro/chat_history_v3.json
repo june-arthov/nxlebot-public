@@ -1,0 +1,30 @@
+[
+  {
+    "id": "104f774f-bf78-4f33-8172-cfe070dd5070",
+    "text": "boy",
+    "is_user": true,
+    "platform": "web",
+    "time": "2026-04-07T13:22:55.454588"
+  },
+  {
+    "id": "db8086bd-8f61-4e79-a887-1f4941dd6205",
+    "text": "Gua catat! 📝",
+    "is_user": false,
+    "platform": "web",
+    "time": "2026-04-07T13:22:55.454615"
+  },
+  {
+    "id": "8cae282e-84c6-4064-b5a0-c119120d0881",
+    "text": "cek memory",
+    "is_user": true,
+    "platform": "web",
+    "time": "2026-04-07T13:23:04.021081"
+  },
+  {
+    "id": "696061dd-42db-4ee3-860a-142797a45b4b",
+    "text": "Interesting point! 💡",
+    "is_user": false,
+    "platform": "web",
+    "time": "2026-04-07T13:23:04.021116"
+  }
+]

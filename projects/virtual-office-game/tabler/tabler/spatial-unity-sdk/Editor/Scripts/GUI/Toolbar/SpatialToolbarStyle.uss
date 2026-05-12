@@ -1,0 +1,51 @@
+/* Icons for dark settings */
+:root {
+    --help-icon: resource('d__Help');
+    --platform-web-icon: resource('BuildSettings.Web.Small');
+    --platform-ios-icon: resource('BuildSettings.iPhone On');
+    --platform-android-icon: resource('BuildSettings.Android On');
+    --platform-meta-icon: resource('Editor/Textures/GUI/OculusLogoSplash.png');
+    --platform-windows-icon: resource('BuildSettings.Standalone On');
+}
+
+.ButtonSpacing {
+    padding-left: 4px;
+    padding-right: 4px;
+    border-top-left-radius: 3px;
+    border-bottom-left-radius: 3px;
+    border-top-right-radius: 3px;
+    border-bottom-right-radius: 3px;
+}
+
+.IconColor {
+    -unity-background-image-tint-color: var(--unity-colors-default-text);
+}
+
+.PlaymodeWarning {
+    border-left-color: var(--unity-colors-default-text);
+    border-right-color: var(--unity-colors-default-text);
+    border-top-color: var(--unity-colors-default-text);
+    border-bottom-color: var(--unity-colors-default-text);
+    -unity-font-style: bold;
+    -unity-text-align: middle-left;
+    border-left-width: 1px;
+    border-right-width: 1px;
+    border-top-width: 1px;
+    border-bottom-width: 1px;
+}
+
+:root {
+    flex-grow: 1;
+}
+
+.PlaymodeWarningTEMP:hover {
+    background-color: rgb(56, 43, 0);
+}
+
+.WarningIcon {
+    -unity-background-image-tint-color: var(--unity-colors-default-text);
+}
+
+.HelpButtonIcon {
+    background-image: var(--help-icon);
+}

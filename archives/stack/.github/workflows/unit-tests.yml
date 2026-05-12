@@ -1,0 +1,125 @@
+name: Unit tests
+
+on:
+  pull_request:
+  push:
+    branches:
+    - master
+    - stable
+    - rc/**
+  workflow_dispatch:
+
+# As of 2026-03-01:
+# * ubuntu-latest comes with Stack 3.9.3 and GHC 9.14.1; and
+# * windows-latest comes with Stack 3.9.1 and GHC 9.14.1.
+# However, macos-15-intel and macos-latest do not come with Haskell tools.
+
+jobs:
+  pedantic:
+    name: Pedantic
+    runs-on: ubuntu-latest
+    steps:
+    - name: Clone project
+      uses: actions/checkout@v6
+    - name: Cache dependencies
+      uses: actions/cache@v5
+      with:
+        path: ~/.stack
+        key: ${{ runner.os }}-${{ hashFiles('stack.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-
+    - name: Pedantic build
+      run: |
+        stack build --pedantic
+    - name: disable-git-info build
+      run: |
+        stack build --pedantic --flag stack:disable-git-info
+  unit-tests:
+    name: Unit tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - os: ubuntu-latest
+          extra-suffix: ""
+          stack-args: ""
+        - os: ubuntu-latest
+          extra-suffix: "alpine"
+          stack-args: "--docker --system-ghc --no-install-ghc --flag stack:static"
+        - os: windows-latest
+          extra-suffix: ""
+          stack-args: ""
+        - os: macos-latest
+          extra-suffix: ""
+          stack-args: ""
+    steps:
+    - name: Clone project
+      uses: actions/checkout@v6
+    - name: Cache dependencies on Unix-like OS
+      if: startsWith(runner.os, 'Linux') || startsWith(runner.os, 'macOS')
+      uses: actions/cache@v5
+      with:
+        path: ~/.stack
+        key: ${{ runner.os }}-${{ hashFiles('stack.yaml') }}-${{ matrix.extra-suffix }}
+    - name: Cache dependencies on Windows
+      if: startsWith(runner.os, 'Windows')
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~\AppData\Roaming\stack
+          ~\AppData\Local\Programs\stack
+        key: ${{ runner.os }}-${{ hashFiles('stack.yaml') }}-${{ matrix.extra-suffix }}
+
+    - name: Run tests
+      shell: bash
+      run: |
+        set -ex
+
+        if [[ "${{ matrix.os }}" == "macos-latest" ]]
+        then
+          # As at 2026-03-01:
+          #
+          # * macos-latest does not include Haskell tools.
+          curl -sSL https://get.haskellstack.org/ | sh
+        fi
+
+        if [[ "${{ matrix.os }}" == "windows-latest" ]]
+        then
+          # As at 2026-03-01:
+          #
+          # * windows-latest does not include Stack 3.9.3.
+          stack upgrade
+        fi
+
+        if [[ "${{ matrix.extra-suffix }}" == "alpine" ]]
+        then
+            mkdir -p ~/.stack
+            touch ~/.stack/config.yaml
+            cat > ~/.stack/config.yaml <<EOF
+            extra-include-dirs:
+            - /usr/include
+            extra-lib-dirs:
+            - /lib
+            - /usr/lib
+        EOF
+        fi
+
+        stack test ${{ matrix.stack-args }} --haddock --no-haddock-deps --ghc-options="-Werror -O0" --copy-bins --local-bin-path bin
+
+        # Get output about whether the exe is dynamically linked
+        if [[ "${{ matrix.os }}" == "macos-latest" ]]
+        then
+            echo "Skipping ldd check on Mac"
+        elif [[ "${{ matrix.os }}" == "windows-latest" ]]
+        then
+            echo "Skipping ldd check on Windows"
+        elif [[ "${{ matrix.extra-suffix }}" == "alpine" ]]
+        then
+            # ldd returns exit code 1 if it's static, so failure is success
+            (ldd ./bin/stack && exit 1) || true
+        else
+            ldd ./bin/stack
+        fi
+
+        ./bin/stack --version

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nxlebot Pro - HeroUI</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{font-family:'Inter',sans-serif}
+body{background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%)}
+.hero-gradient{background:linear-gradient(135deg,#3b82f6 0%,#10b981 100%)}
+.message-enter{animation:slideIn .3s ease-out}
+@keyframes slideIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.typing-dot{animation:typingBounce 1.4s infinite}
+@keyframes typingBounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px)}}
+.scrollbar::-webkit-scrollbar{width:6px}
+.scrollbar::-webkit-scrollbar-track{background:transparent}
+.scrollbar::-webkit-scrollbar-thumb{background:#475569;border-radius:3px}
+</style>
+</head>
+<body class="h-screen flex flex-col">
+<!-- Header -->
+<header class="bg-slate-800/80 backdrop-blur-lg border-b border-slate-700 px-6 py-4 flex items-center justify-between">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded-xl hero-gradient flex items-center justify-center text-2xl shadow-lg shadow-blue-500/30">🤖</div>
+<div>
+<h1 class="text-lg font-semibold text-white">Nxlebot Pro</h1>
+<div class="flex items-center gap-2 text-sm text-slate-400">
+<span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+Online & Ready
+</div>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<button onclick="toggleStats()" class="px-4 py-2 bg-slate-700/50 hover:bg-slate-600/50 rounded-lg text-sm font-medium text-slate-300 transition-all">📊 Stats</button>
+<button onclick="clearChat()" class="px-4 py-2 bg-slate-700/50 hover:bg-red-600/50 rounded-lg text-sm font-medium text-slate-300 hover:text-white transition-all">🗑️</button>
+</div>
+</header>
+
+<!-- Chat Area -->
+<main class="flex-1 overflow-y-auto scrollbar px-6 py-4" id="chat">
+<div class="flex flex-col items-center justify-center h-full text-center" id="welcome">
+<div class="text-7xl mb-6 animate-bounce">👋</div>
+<h2 class="text-3xl font-bold text-white mb-3">Selamat Datang di Nxlebot Pro!</h2>
+<p class="text-slate-400 max-w-md mb-6">AI Assistant dengan UI/UX terbaik. Chat seperti di Telegram tapi lebih keren!</p>
+<div class="flex gap-3">
+<span class="px-4 py-2 bg-green-500/20 text-green-400 rounded-full text-sm font-medium">✨ Smart AI</span>
+<span class="px-4 py-2 bg-blue-500/20 text-blue-400 rounded-full text-sm font-medium">⚡ Fast</span>
+<span class="px-4 py-2 bg-purple-500/20 text-purple-400 rounded-full text-sm font-medium">🔒 Secure</span>
+</div>
+</div>
+</main>
+
+<!-- Typing Indicator -->
+<div class="hidden px-6 pb-2" id="typing">
+<div class="flex items-center gap-2 bg-slate-800/80 rounded-2xl px-4 py-3 w-fit">
+<div class="flex gap-1">
+<span class="w-2 h-2 bg-slate-400 rounded-full typing-dot"></span>
+<span class="w-2 h-2 bg-slate-400 rounded-full typing-dot" style="animation-delay:.2s"></span>
+<span class="w-2 h-2 bg-slate-400 rounded-full typing-dot" style="animation-delay:.4s"></span>
+</div>
+</div>
+</div>
+
+<!-- Input Area -->
+<footer class="bg-slate-800/80 backdrop-blur-lg border-t border-slate-700 px-6 py-4">
+<div class="max-w-4xl mx-auto flex gap-3">
+<div class="flex-1 relative">
+<textarea id="msg" rows="1" placeholder="Ketik pesan Anda..." 
+class="w-full bg-slate-700/50 border-2 border-transparent focus:border-blue-500 rounded-xl px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all resize-none min-h-[52px] max-h-[150px]"></textarea>
+</div>
+<button id="send" onclick="send()" disabled
+class="w-[52px] h-[52px] hero-gradient rounded-xl flex items-center justify-center text-xl font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-blue-500/30 hover:scale-105 transition-all">
+➤
+</button>
+</div>
+</footer>
+
+<!-- Stats Panel -->
+<div class="fixed top-0 right-0 h-full w-80 bg-slate-800/95 backdrop-blur-lg border-l border-slate-700 shadow-2xl transform translate-x-full transition-transform duration-300 z-50" id="statsPanel">
+<div class="p-6">
+<div class="flex items-center justify-between mb-6">
+<h3 class="text-xl font-bold text-white">📊 Statistics</h3>
+<button onclick="toggleStats()" class="text-slate-400 hover:text-white text-2xl">×</button>
+</div>
+<div class="space-y-4">
+<div class="bg-slate-700/50 rounded-xl p-4">
+<div class="text-sm text-slate-400 mb-1">Total Messages</div>
+<div class="text-3xl font-bold text-white" id="statTotal">0</div>
+</div>
+<div class="bg-slate-700/50 rounded-xl p-4">
+<div class="text-sm text-slate-400 mb-1">Your Messages</div>
+<div class="text-3xl font-bold text-blue-400" id="statUser">0</div>
+</div>
+<div class="bg-slate-700/50 rounded-xl p-4">
+<div class="text-sm text-slate-400 mb-1">Bot Responses</div>
+<div class="text-3xl font-bold text-green-400" id="statBot">0</div>
+</div>
+<div class="bg-gradient-to-br from-blue-600/20 to-green-600/20 rounded-xl p-4 border border-blue-500/30">
+<div class="text-sm text-slate-300 mb-2">🎯 Pro Features</div>
+<div class="text-xs text-slate-400 space-y-1">
+• Smart AI Responses<br>
+• Auto-sync every 10s<br>
+• Beautiful UI/UX<br>
+• Telegram Ready
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="fixed inset-0 bg-black/50 backdrop-blur-sm hidden z-40" id="overlay" onclick="toggleStats()"></div>
+
+<script>
+const chat=document.getElementById('chat'),msg=document.getElementById('msg'),sendBtn=document.getElementById('send'),typing=document.getElementById('typing'),welcome=document.getElementById('welcome'),statsPanel=document.getElementById('statsPanel'),overlay=document.getElementById('overlay');
+let ids=new Set(),loaded=false;
+
+msg.addEventListener('input',()=>{msg.style.height='auto';msg.style.height=Math.min(msg.scrollHeight,150)+'px';sendBtn.disabled=!msg.value.trim()});
+msg.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});
+
+async function load(){
+try{
+const r=await fetch('/api/history'),d=await r.json();
+if(d.messages&&d.messages.length>0&&!loaded){
+welcome.remove();loaded=true;
+d.messages.forEach(x=>{if(!ids.has(x.id)){add(x.id,x.text,!x.is_user,x.time);ids.add(x.id)}});
+updateStats(d.messages.length);
+}
+}catch(e){console.log('Load:',e)}
+}
+
+function add(id,txt,bot,time){
+if(ids.has(id))return;
+const d=document.createElement('div');
+d.className='message flex gap-3 max-w-[75%] message-enter'+(bot?'':' ml-auto flex-row-reverse');
+d.innerHTML=`
+<div class="w-10 h-10 rounded-xl hero-gradient flex items-center justify-center text-xl flex-shrink-0 shadow-lg">${bot?'🤖':'👤'}</div>
+<div class="flex flex-col ${bot?'':'items-end'} gap-1">
+<div class="bg-slate-800/90 backdrop-blur border border-slate-700 rounded-2xl px-4 py-3 text-white leading-relaxed shadow-lg">${txt.replace(/\n/g,'<br>')}</div>
+<div class="text-xs text-slate-500 px-1">${time?new Date(time).toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'}):new Date().toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'})}</div>
+</div>`;
+chat.appendChild(d);chat.scrollTop=chat.scrollHeight;ids.add(id);
+}
+
+async function send(){
+const t=msg.value.trim();if(!t)return;
+const tid='u'+Date.now();
+add(tid,t,false);msg.value='';msg.style.height='auto';sendBtn.disabled=true;
+typing.classList.remove('hidden');chat.scrollTop=chat.scrollHeight;
+try{
+const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:t})});
+const d=await r.json();
+typing.classList.add('hidden');
+if(d.response)add(d.id||('b'+Date.now()),d.response,true,d.time);
+updateStats();
+}catch(e){typing.classList.add('hidden');add('e'+Date.now(),'⚠️ Error occurred',true);}
+}
+
+function toggleStats(){
+statsPanel.classList.toggle('translate-x-full');
+overlay.classList.toggle('hidden');
+if(!statsPanel.classList.contains('translate-x-full'))updateStats();
+}
+
+async function updateStats(total){
+try{
+const r=await fetch('/api/stats'),d=await r.json();
+document.getElementById('statTotal').textContent=d.total||0;
+document.getElementById('statUser').textContent=(d.total-d.bot)||0;
+document.getElementById('statBot').textContent=d.bot||0;
+}catch(e){}
+}
+
+async function clearChat(){
+if(confirm('Clear all chat history?')){
+try{await fetch('/api/clear',{method:'POST'});chat.innerHTML='';chat.appendChild(welcome);welcome.style.display='flex';ids.clear();loaded=false;updateStats();}catch(e){alert('Error');}
+}
+}
+
+load();msg.focus();sendBtn.disabled=true;
+setInterval(load,10000);
+</script>
+</body>
+</html>

@@ -1,0 +1,306 @@
+# Development Guide
+
+This document provides information for developers contributing to Conflux.
+
+## Prerequisites
+
+- Rust 1.70 or later
+- Cargo (included with Rust)
+
+## Building
+
+### Debug build
+
+```bash
+cargo build
+```
+
+### Release build
+
+```bash
+cargo build --release
+```
+
+The binary will be available at `target/release/cflx`.
+
+## Testing
+
+### Test tiers (default-path vs heavy real-boundary)
+
+Conflux separates tests into two explicit tiers:
+
+- **Default-path (fast)**: `cargo test`
+  - Everyday developer loop and acceptance baseline.
+  - Includes unit tests and lightweight integration tests.
+- **Heavy tier (opt-in)**: `cargo test --features heavy-tests`
+  - Includes real-boundary suites that exercise real `git`, worktrees, OS process behavior, and similar expensive integration/E2E paths.
+
+### Current test surface classification inventory
+
+| Suite | Classification | Default path | Notes |
+|---|---|---|---|
+| `tests/run_exit_tests.rs` | fast integration | yes | Process behavior verification without long-lived real-boundary orchestration |
+| `tests/no_backup_files_test.rs` | fast integration/contract | yes | Repository hygiene guard |
+| `tests/install_skills_test.rs` | fast integration | yes | Filesystem + embedded skill install behavior |
+| `tests/e2e_tests.rs` | heavy contract/E2E (opt-in) | no (requires `heavy-tests`) | Mock-basedだが長時間化しやすいため heavy tier へ分離 |
+| `tests/e2e_proposal_session.rs` | heavy E2E / real-boundary | no (requires `heavy-tests`) | Real git repo + websocket/session boundary |
+| `tests/e2e_git_worktree_tests.rs` | heavy E2E / real-boundary | no (requires `heavy-tests`) | Real git worktree lifecycle + merge/conflict |
+| `tests/process_cleanup_test.rs` | heavy integration / real-boundary | no (requires `heavy-tests`) | OS process group and signal semantics |
+| `tests/merge_conflict_check_tests.rs` | heavy integration / real-boundary | no (requires `heavy-tests`) | Real `git merge-tree` process + repo mutation |
+| `src/parallel/tests/executor.rs` (selected tests) | heavy integration / real-boundary | no (requires `heavy-tests`) | Real git repo/worktree/merge lifecycle used by parallel executor merge tests |
+| `src/server/api.rs` (selected tests) | heavy integration / real-boundary | no (requires `heavy-tests`) | Real repo setup / project add flow / setup script behavior |
+| `src/ai_command_runner.rs` (selected inactivity-timeout tests) | heavy integration / real-time | no (requires `heavy-tests`) | Deliberately waits on inactivity timeout/retry behavior and is too slow for default path |
+| `src/orchestration/archive.rs` (selected retry/verify test) | heavy integration / shell-retry | no (requires `heavy-tests`) | End-to-end archive retry verification via shell script and filesystem mutation |
+
+For heavy suites, keep `#![cfg(feature = "heavy-tests")]` at file top so they remain opt-in by design.
+
+### Validation by phase
+
+- **Pre-commit hook**: `cargo fmt --all` + `cargo clippy --locked --all-targets --all-features -- -D warnings`
+- **Local developer loop**: `cargo test`
+- **Acceptance baseline**: `cargo fmt --check && cargo clippy -- -D warnings && cargo test`
+- **Broader readiness / explicit E2E**: `cargo test --features heavy-tests`
+
+### Run tests
+
+```bash
+# default-path fast suite
+cargo test
+
+# explicit heavy suite
+cargo test --features heavy-tests
+```
+
+### Run tests with coverage
+
+```bash
+# Install cargo-llvm-cov if not present
+cargo install cargo-llvm-cov
+
+# Run tests with coverage summary
+cargo llvm-cov --all-features
+
+# Generate detailed HTML report (opens in browser)
+cargo llvm-cov --all-features --html --open
+
+# Generate JSON report for CI/CD
+cargo llvm-cov --all-features --json --output-path coverage.json
+```
+
+### Run specific tests
+
+```bash
+# Run tests matching a pattern
+cargo test test_name
+
+# Run tests in a specific module
+cargo test module_name::
+```
+
+## Debugging
+
+### Run with logging
+
+```bash
+RUST_LOG=debug cargo run -- run
+```
+
+Available log levels: `error`, `warn`, `info`, `debug`, `trace`
+
+### Run with specific log targets
+
+```bash
+# Log only orchestrator module
+RUST_LOG=conflux::orchestrator=debug cargo run -- run
+
+# Log multiple modules
+RUST_LOG=conflux::agent=debug,conflux::hooks=debug cargo run -- run
+```
+
+## Project Structure
+
+```
+src/
+├── main.rs                 # Entry point (default: TUI mode)
+├── cli.rs                  # CLI argument parsing (run, tui, init)
+├── config/                 # Configuration file parsing (JSONC)
+├── agent/                  # AI agent runner (configurable commands)
+├── history.rs              # Apply attempt history tracking
+├── hooks.rs                # Lifecycle hooks execution
+├── orchestrator.rs         # Main orchestration loop (serial)
+├── orchestration/          # Orchestration sub-steps (apply, archive, selection, hooks)
+├── execution/              # Execution state and apply/archive runners
+├── parallel/               # Parallel execution across jj/git workspaces
+├── vcs/                    # VCS abstraction (git commands, workspace ops)
+├── templates.rs            # Configuration templates (claude, opencode, codex)
+├── task_parser.rs          # Task file parsing and progress calculation
+├── error.rs                # Error types (OrchestratorError)
+├── openspec.rs             # OpenSpec wrapper (list, archive)
+├── progress.rs             # Progress display (indicatif)
+├── tui/                    # Interactive TUI dashboard (ratatui)
+├── server/                 # HTTP/WebSocket server for remote control
+├── remote/                 # Remote client and WebSocket types
+└── web/                    # Web API types and WebSocket protocol
+```
+
+## Architecture Overview
+
+### Core Components
+
+| Component | Module | Responsibility |
+|-----------|--------|----------------|
+| CLI | `cli.rs` | Parse command-line arguments and dispatch to subcommands |
+| Config | `config/` | Load and parse JSONC configuration files |
+| Agent | `agent/` | Execute AI agent commands with placeholder substitution |
+| History | `history.rs` | Track apply attempts per change for retry context |
+| Hooks | `hooks.rs` | Execute lifecycle hooks at various workflow stages |
+| Orchestrator | `orchestrator.rs` | Main loop: list changes, select next, apply/archive |
+| Orchestration | `orchestration/` | Sub-steps: change selection, apply, archive, hook dispatch |
+| Execution | `execution/` | Apply/archive runners and execution state |
+| Parallel | `parallel/` | Parallel execution across jj/git workspaces |
+| VCS | `vcs/` | VCS abstraction layer (git commands, workspace operations) |
+| TUI | `tui/` | Interactive terminal dashboard using ratatui |
+| Server | `server/` | HTTP/WebSocket server for remote control |
+| OpenSpec | `openspec.rs` | Wrapper for OpenSpec CLI commands |
+
+### Data Flow
+
+```
+User starts orchestrator
+        ↓
+    Load config (.cflx.jsonc)
+        ↓
+    Run on_start hook
+        ↓
+┌─→ List changes (openspec list)
+│       ↓
+│   Select next change
+│   • Priority 1: 100% complete → archive
+│   • Priority 2: LLM analysis
+│   • Priority 3: Highest progress
+│       ↓
+│   Execute apply_command or archive_command
+│       ↓
+│   Run post hooks
+│       ↓
+└── Repeat until no changes remain
+        ↓
+    Run on_finish hook
+```
+
+## Code Style
+
+### Formatting
+
+```bash
+cargo fmt
+```
+
+### Linting
+
+```bash
+cargo clippy
+```
+
+### Pre-commit checks
+
+```bash
+cargo fmt --check && cargo clippy -- -D warnings && cargo test
+```
+
+Archive 前チェックでは、通常 commit 時の hook と同等の検証として `prek run --all-files` を実行する。
+`pre-commit` コマンドが未導入の場合は `prek` を標準手段とし、以下のセットアップ後に同じコマンドを実行する。
+
+Install the Git hook using prek:
+
+**Migration from pre-commit:**
+
+If you were previously using pre-commit, uninstall it first:
+
+```bash
+pre-commit uninstall
+```
+
+**Setup prek:**
+
+```bash
+# Install prek
+brew install prek
+
+# Install hooks
+prek install
+```
+
+The prek hook configuration is defined in `.pre-commit-config.yaml` (prek is fully compatible with pre-commit configuration format). When you run `prek run --all-files`, it auto-runs `make openapi` and stages `docs/openapi.yaml`.
+
+## Adding New Features
+
+### Adding a new hook
+
+1. Add the hook variant to `HookType` enum in `hooks.rs`
+2. Add the field to `HooksConfig` struct in `config/mod.rs`
+3. Call `execute_hook()` at the appropriate place in `orchestrator.rs`
+4. Update templates in `templates.rs` with commented example
+5. Document in README.md
+
+### Adding a new configuration option
+
+1. Add the field to `OrchestratorConfig` in `config/mod.rs`
+2. Handle the option in the relevant component
+3. Update templates in `templates.rs`
+4. Document in README.md
+
+### Adding a new CLI subcommand
+
+1. Add the subcommand to `Commands` enum in `cli.rs`
+2. Create argument struct if needed (e.g., `RunArgs`)
+3. Handle the subcommand in `main.rs`
+4. Document in README.md and README.ja.md
+
+### Adding support for a new VCS for parallel execution
+
+1. Add a new backend under `vcs/` following the existing git implementation
+2. Implement workspace creation, merge, and cleanup operations
+3. Add detection logic in `orchestrator.rs` to choose the appropriate backend
+4. Update documentation
+
+## Command Template Escaping
+
+- Placeholders like `{prompt}`, `{proposal}`, and `{conflict_files}` are shell-escaped with `shlex` on POSIX systems.
+- Prefer templates without manual quotes, such as `opencode run --format json {prompt}`.
+- If a placeholder must live inside a larger single-quoted string (for example `/openspec:apply {change_id} {prompt}`), keep the surrounding quotes; the expander strips extra outer quotes to avoid double-quoting.
+- Windows builds keep the existing behavior and sanitize null/newline characters.
+
+## Release Process
+
+1. Update version in `Cargo.toml`
+2. Run all tests: `cargo test`
+3. Run clippy: `cargo clippy -- -D warnings`
+4. Build release: `cargo build --release`
+5. Tag the release: `git tag vX.Y.Z`
+
+## Troubleshooting Development Issues
+
+### Build fails with dependency errors
+
+```bash
+cargo update
+cargo build
+```
+
+### Tests fail intermittently
+
+Some tests may depend on timing. Run with `--test-threads=1`:
+
+```bash
+cargo test -- --test-threads=1
+```
+
+### TUI doesn't render correctly
+
+Ensure your terminal supports:
+- 256 colors
+- Unicode characters
+- Alternate screen buffer
+
+Test with: `echo $TERM` (should be `xterm-256color` or similar)

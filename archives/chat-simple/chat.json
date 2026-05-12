@@ -1,0 +1,44 @@
+[
+  {
+    "id": "8a9bcdce-8e1f-408f-9d2e-b554a1337b4b",
+    "text": "Halo",
+    "is_user": true,
+    "platform": "web",
+    "time": "2026-04-07T12:46:44.420448"
+  },
+  {
+    "id": "853787ed-eba1-441c-8609-9372d3e7f363",
+    "text": "Halo bro! 👋 Ada yang bisa gua bantu?",
+    "is_user": false,
+    "platform": "web",
+    "time": "2026-04-07T12:46:44.420467"
+  },
+  {
+    "id": "8659edf0-a46c-42ac-a231-874cc22466c5",
+    "text": "sabar ya boy",
+    "is_user": true,
+    "platform": "web",
+    "time": "2026-04-07T13:04:01.261660"
+  },
+  {
+    "id": "89bfbfd9-dcd0-4849-b9b2-6711ef90887d",
+    "text": "Siap!",
+    "is_user": false,
+    "platform": "web",
+    "time": "2026-04-07T13:04:01.261688"
+  },
+  {
+    "id": "bde50f96-472a-4795-a948-a310aacad23c",
+    "text": "gua benahin UI dulu",
+    "is_user": true,
+    "platform": "web",
+    "time": "2026-04-07T13:04:22.507926"
+  },
+  {
+    "id": "8f5daffc-be21-4d47-8fee-9578165ebd3e",
+    "text": "Halo bro! 👋 Ada yang bisa gua bantu?",
+    "is_user": false,
+    "platform": "web",
+    "time": "2026-04-07T13:04:22.507941"
+  }
+]

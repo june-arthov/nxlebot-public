@@ -1,0 +1,18 @@
+# system-report.ocp — Laporan kesehatan sistem
+# Cron: setiap jam
+
+echo "============================"
+echo " SYSTEM REPORT - $(date)"
+echo "============================"
+
+echo ""
+echo "[DISK]"
+run "df -h /"
+
+echo ""
+echo "[MEMORY]"
+run "free -h"
+
+echo ""
+echo "[LOAD]"
+run "uptime"

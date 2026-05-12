@@ -1,0 +1,86 @@
+[
+  {
+    "id": "40b44f63-cbf1-4cc2-bf72-9bed0bfc33fd",
+    "text": "halo",
+    "is_user": true,
+    "platform": "web",
+    "time": "2026-04-07T13:29:15.928982"
+  },
+  {
+    "id": "4d4c955e-3d76-496a-9e2a-4c93aacf8273",
+    "text": "Halo bro! 👋",
+    "is_user": false,
+    "platform": "web",
+    "time": "2026-04-07T13:29:15.929001"
+  },
+  {
+    "id": "eb62f08e-6c93-4a96-88ea-a9fd5238d8c1",
+    "text": "siapa kamu",
+    "is_user": true,
+    "platform": "web",
+    "time": "2026-04-07T13:29:30.801568"
+  },
+  {
+    "id": "2b6f9818-4ab8-48d9-98d6-a717f8cb13db",
+    "text": "Oke bro!",
+    "is_user": false,
+    "platform": "web",
+    "time": "2026-04-07T13:29:30.801590"
+  },
+  {
+    "id": "7664ec4b-ea9e-45f0-ae30-1d078863f95e",
+    "text": "lah",
+    "is_user": true,
+    "platform": "web",
+    "time": "2026-04-07T13:29:35.243109"
+  },
+  {
+    "id": "387ef735-faa4-4dc9-a495-5862ce272070",
+    "text": "Menarik!",
+    "is_user": false,
+    "platform": "web",
+    "time": "2026-04-07T13:29:35.243130"
+  },
+  {
+    "id": "86024116-ed07-4cd8-ae46-22e01e1b5333",
+    "text": "lah",
+    "is_user": true,
+    "platform": "web",
+    "time": "2026-04-07T13:29:39.202810"
+  },
+  {
+    "id": "bf2fba64-bae3-4d58-97c5-e0541cce5381",
+    "text": "Menarik!",
+    "is_user": false,
+    "platform": "web",
+    "time": "2026-04-07T13:29:39.202836"
+  },
+  {
+    "id": "67bc88a8-b57f-45c2-a58d-ee1146158b02",
+    "text": "aduh",
+    "is_user": true,
+    "platform": "web",
+    "time": "2026-04-07T13:29:42.852070"
+  },
+  {
+    "id": "58e3938b-fb41-4d48-a524-0771d1905bba",
+    "text": "Siap!",
+    "is_user": false,
+    "platform": "web",
+    "time": "2026-04-07T13:29:42.852089"
+  },
+  {
+    "id": "3031a108-4578-4688-b2b2-227f7fcbfecb",
+    "text": "bego",
+    "is_user": true,
+    "platform": "web",
+    "time": "2026-04-07T13:29:46.417407"
+  },
+  {
+    "id": "8ab828a4-f115-44e1-bf26-f981016c82ee",
+    "text": "Oke bro!",
+    "is_user": false,
+    "platform": "web",
+    "time": "2026-04-07T13:29:46.417432"
+  }
+]

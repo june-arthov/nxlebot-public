@@ -1,0 +1,31 @@
+.breadcrumb {
+    display: none;
+}
+
+.footer {
+    background: #323232;
+    color: #fff;
+    padding: $grid-gutter-width 0 $grid-gutter-width/2;
+
+    a {
+        color: #fff;
+    }
+}
+
+.navbar-default .navbar-brand {
+    color: $brand-primary;
+}
+
+.row-flex {
+    display: flex;
+    flex-wrap: wrap;
+
+    > div[class*='col-'] {
+        display: flex;
+        flex: 0 1 auto;
+
+        .thumbnail {
+            width: 100%;
+        }
+    }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "io.spatial.unitysdk",
+  "dependencies": {
+    "com.unity.scriptablebuildpipeline": "1.21.1",
+    "com.unity.editorcoroutines": "1.0.0",
+    "com.unity.textmeshpro": "3.0.8",
+    "com.unity.visualscripting": "1.8.0",
+    "com.unity.ai.navigation": "1.0.0-exp.4",
+    "com.unity.nuget.mono-cecil": "1.11.4",
+    "com.unity.addressables": "1.21.17"
+  },
+  "displayName": "Spatial Unity SDK",
+  "version": "1.71.0",
+  "unity": "2021.3",
+  "description": "This package allows creators to build 3D spaces using the Unity editor and publish them to Spatial",
+  "keywords": [
+    "Unity",
+    "Spatial",
+    "Virtual Spaces",
+    "Metaverse"
+  ],
+  "homepage": "https://www.spatial.io/",
+  "documentationUrl": "https://docs.spatial.io",
+  "bugs": {
+    "url": "https://support.spatial.io/hc/en-us"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/spatialsys/spatial-unity-sdk.git"
+  },
+  "license": "MIT",
+  "author": "Spatial Systems (https://www.spatial.io)",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 0"
+  }
+}
